@@ -1,5 +1,4 @@
 import { VelaShell } from "@/components/VelaShell";
-import { alerts } from "@/lib/vela-data";
 
 export default function WatchtowerPage() {
   return (
@@ -17,7 +16,7 @@ export default function WatchtowerPage() {
         <div className="hero-stats">
           <div className="metric-row">
             <span className="metric-label">Last Poll</span>
-            <span className="metric-value green">12s ago</span>
+            <span className="metric-value green">Service managed</span>
           </div>
           <div className="metric-row">
             <span className="metric-label">Auto-Pauses</span>
@@ -35,15 +34,17 @@ export default function WatchtowerPage() {
           <span className="tb-pill pill-green">LIVE</span>
         </div>
         <div className="panel-body page-stack">
-          {alerts.map((alert) => (
-            <div className={`alert-msg ${alert.tone}`} key={alert.title + alert.time}>
-              <div className="alert-head">
-                <span className="alert-title">{alert.title}</span>
-                <span className="alert-time">{alert.time}</span>
-              </div>
-              <div className="alert-body">{alert.body}</div>
+          <div className="alert-msg">
+            <div className="alert-head">
+              <span className="alert-title">Watchtower Endpoint</span>
+              <span className="alert-time">Configured off-chain</span>
             </div>
-          ))}
+            <div className="alert-body">
+              The deployed frontend reads on-chain pause and compliance state.
+              The watchtower service owns polling 0G DA and sending Farcaster
+              alerts when attestations fail.
+            </div>
+          </div>
         </div>
       </section>
     </VelaShell>

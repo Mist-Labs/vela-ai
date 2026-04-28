@@ -3,7 +3,27 @@ import DecisionFeed from "@/components/DecisionFeed";
 import PolicyDisplay from "@/components/PolicyDisplay";
 import { StatsRow } from "@/components/StatsRow";
 import { VelaShell } from "@/components/VelaShell";
-import { alerts, securityLayers } from "@/lib/vela-data";
+
+const securityLayers = [
+  {
+    number: "01",
+    name: "Execution Firewall",
+    description:
+      "Uniswap v4 Hook enforces policy before swaps execute. Violations are blocked at execution time.",
+  },
+  {
+    number: "02",
+    name: "Intelligence Integrity",
+    description:
+      "Agent decisions are designed to be produced in 0G Sealed Inference and stored as verifiable records.",
+  },
+  {
+    number: "03",
+    name: "Ambient Monitoring",
+    description:
+      "The watchtower verifies attestations and can trigger PolicyRegistry circuit breaker protection.",
+  },
+];
 
 export default function DashboardPage() {
   return (
@@ -30,7 +50,6 @@ export default function DashboardPage() {
                     <span className="tag active">ACTIVE</span>
                   </div>
                   <div className="layer-desc">{layer.description}</div>
-                  <div className="layer-stat">{layer.stat}</div>
                 </div>
               </div>
             ))}
@@ -43,15 +62,17 @@ export default function DashboardPage() {
             <span className="tb-pill pill-dim">@VELA-AGENT</span>
           </div>
           <div className="panel-body page-stack">
-            {alerts.map((alert) => (
-              <div className={`alert-msg ${alert.tone}`} key={alert.title + alert.time}>
-                <div className="alert-head">
-                  <span className="alert-title">{alert.title}</span>
-                  <span className="alert-time">{alert.time}</span>
-                </div>
-                <div className="alert-body">{alert.body}</div>
+            <div className="alert-msg">
+              <div className="alert-head">
+                <span className="alert-title">Live Alert Channel</span>
+                <span className="alert-time">Wallet gated</span>
               </div>
-            ))}
+              <div className="alert-body">
+                Connect a configured wallet to read vault state. Production
+                alert delivery is handled by the watchtower and Farcaster
+                notifier service.
+              </div>
+            </div>
           </div>
         </section>
       </div>

@@ -1,4 +1,5 @@
 import DecisionFeed from "@/components/DecisionFeed";
+import LiveMetric from "@/components/LiveMetric";
 import { VelaShell } from "@/components/VelaShell";
 
 export default function DecisionsPage() {
@@ -16,11 +17,15 @@ export default function DecisionsPage() {
         <div className="hero-stats">
           <div className="metric-row">
             <span className="metric-label">Total</span>
-            <span className="metric-value cyan">847</span>
+            <span className="metric-value cyan">
+              <LiveMetric field="totalDecisions" />
+            </span>
           </div>
           <div className="metric-row">
             <span className="metric-label">Verified</span>
-            <span className="metric-value green">847</span>
+            <span className="metric-value green">
+              <LiveMetric field="compliantDecisions" />
+            </span>
           </div>
           <div className="metric-row">
             <span className="metric-label">Failures</span>

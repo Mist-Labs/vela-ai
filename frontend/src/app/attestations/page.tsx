@@ -1,11 +1,5 @@
 import { VelaShell } from "@/components/VelaShell";
-
-const attestations = [
-  ["#847", "0G DA", "bafy...91ac", "0x8f3a...d4c9", "Verified"],
-  ["#846", "0G DA", "bafy...71bd", "0x8f3a...d4c9", "Verified"],
-  ["#845", "0G DA", "bafy...53ef", "0x8f3a...d4c9", "Verified"],
-  ["#844", "0G DA", "bafy...24aa", "0x8f3a...d4c9", "Verified"],
-];
+import DecisionFeed from "@/components/DecisionFeed";
 
 export default function AttestationsPage() {
   return (
@@ -27,7 +21,7 @@ export default function AttestationsPage() {
           </div>
           <div className="metric-row">
             <span className="metric-label">Model</span>
-            <span className="metric-value">qwen3.6-plus</span>
+            <span className="metric-value">0G sealed inference</span>
           </div>
           <div className="metric-row">
             <span className="metric-label">Verified</span>
@@ -38,31 +32,10 @@ export default function AttestationsPage() {
       <section className="panel">
         <div className="panel-head">
           <span className="panel-title">Recent Attestation Records</span>
-          <span className="tb-pill pill-cyan">847 STORED</span>
+          <span className="tb-pill pill-cyan">VAULT READ</span>
         </div>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Decision</th>
-              <th>Storage</th>
-              <th>CID</th>
-              <th>Enclave</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {attestations.map((row) => (
-              <tr key={row[0]}>
-                {row.map((cell, index) => (
-                  <td className={index === 4 ? "green" : ""} key={cell}>
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </section>
+      <DecisionFeed />
     </VelaShell>
   );
 }

@@ -1,11 +1,6 @@
 import { StatsRow } from "@/components/StatsRow";
 import { VelaShell } from "@/components/VelaShell";
-
-const positions = [
-  ["ETH/USDC v4", "$18,240", "24.1%", "7.2%", "Allowed"],
-  ["WBTC/USDC v4", "$12,050", "18.4%", "6.1%", "Allowed"],
-  ["USDC Reserve", "$17,940", "57.5%", "4.0%", "Idle buffer"],
-];
+import LiveMetric from "@/components/LiveMetric";
 
 export default function PerformancePage() {
   return (
@@ -23,15 +18,15 @@ export default function PerformancePage() {
         <div className="hero-stats">
           <div className="metric-row">
             <span className="metric-label">NAV</span>
-            <span className="metric-value cyan">$48,230.12</span>
+            <span className="metric-value cyan">
+              $<LiveMetric field="totalAssets" />
+            </span>
           </div>
           <div className="metric-row">
-            <span className="metric-label">30-Day Yield</span>
-            <span className="metric-value green">7.3%</span>
-          </div>
-          <div className="metric-row">
-            <span className="metric-label">Drawdown</span>
-            <span className="metric-value amber">4.1%</span>
+            <span className="metric-label">Decisions</span>
+            <span className="metric-value green">
+              <LiveMetric field="totalDecisions" />
+            </span>
           </div>
         </div>
       </section>
@@ -39,30 +34,15 @@ export default function PerformancePage() {
       <section className="panel">
         <div className="panel-head">
           <span className="panel-title">Portfolio Allocation</span>
-          <span className="tb-pill pill-cyan">POLICY BOUNDED</span>
+          <span className="tb-pill pill-cyan">ERC-4626 LIVE READS</span>
         </div>
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Position</th>
-              <th>Value</th>
-              <th>Allocation</th>
-              <th>APY</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {positions.map((row) => (
-              <tr key={row[0]}>
-                {row.map((cell, index) => (
-                  <td className={index === 3 ? "green" : ""} key={cell}>
-                    {cell}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="panel-body">
+          <p className="body-copy">
+            The current vault contract exposes aggregate ERC-4626 assets and
+            decision history. Detailed pool-level allocation can be added when
+            the deployed strategy adapter exposes position reads.
+          </p>
+        </div>
       </section>
     </VelaShell>
   );

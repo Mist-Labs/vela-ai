@@ -2,12 +2,13 @@ export default function ConflictAlert() {
   return (
     <div className="alert-msg warn">
       <div className="alert-head">
-        <span className="alert-title">Conflict Detected</span>
-        <span className="alert-time">Resolved</span>
+        <span className="alert-title">Compiler Check</span>
+        <span className="alert-time">Local</span>
       </div>
       <div className="alert-body">
-        "Grow steadily" and a 15% stop-loss reduce exposure to higher-yield pools.
-        Conservative settings remain active until the owner confirms otherwise.
+        The frontend computes the policy root locally and registers it through
+        PolicyRegistry. Backend NLP enrichment can publish a policy URI without
+        changing the on-chain commitment flow.
       </div>
     </div>
   );

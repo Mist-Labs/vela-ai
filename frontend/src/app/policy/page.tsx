@@ -17,7 +17,7 @@ export default function PolicyPage() {
       <section className="panel">
         <div className="panel-head">
           <span className="panel-title">Compiled Constraints</span>
-          <span className="tb-pill pill-cyan">POLICY ROOT 0xabc3...d9f1</span>
+          <span className="tb-pill pill-cyan">LIVE POLICY READ</span>
         </div>
         <table className="data-table">
           <thead>

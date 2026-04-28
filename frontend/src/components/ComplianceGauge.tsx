@@ -1,4 +1,11 @@
+"use client";
+
+import { useVelaData } from "./WalletProvider";
+
 export default function ComplianceGauge() {
+  const data = useVelaData();
+  const score = data.complianceScore || "--";
+
   return (
     <section className="panel">
       <div className="panel-head">
@@ -12,18 +19,20 @@ export default function ComplianceGauge() {
             <circle className="gauge-fill" cx="50" cy="50" r="45" />
           </svg>
           <div className="gauge-center">
-            <div className="gauge-value">100%</div>
+            <div className="gauge-value">{score}</div>
             <div className="gauge-label">COMPLIANCE</div>
           </div>
         </div>
         <div className="metric-list">
           <div className="metric-row">
             <span className="metric-label">Total Decisions</span>
-            <span className="metric-value cyan">847</span>
+            <span className="metric-value cyan">{data.totalDecisions || "0"}</span>
           </div>
           <div className="metric-row">
             <span className="metric-label">TEE Verified</span>
-            <span className="metric-value green">847 / 847</span>
+            <span className="metric-value green">
+              {data.compliantDecisions || "0"} / {data.totalDecisions || "0"}
+            </span>
           </div>
           <div className="metric-row">
             <span className="metric-label">Hook Blocks</span>
@@ -35,7 +44,9 @@ export default function ComplianceGauge() {
           </div>
           <div className="metric-row">
             <span className="metric-label">0G DA Records</span>
-            <span className="metric-value cyan">847 STORED</span>
+            <span className="metric-value cyan">
+              {data.decisions.length} LOADED
+            </span>
           </div>
         </div>
       </div>
