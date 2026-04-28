@@ -1,0 +1,60 @@
+import ComplianceGauge from "@/components/ComplianceGauge";
+import DecisionFeed from "@/components/DecisionFeed";
+import PolicyDisplay from "@/components/PolicyDisplay";
+import { StatsRow } from "@/components/StatsRow";
+import { VelaShell } from "@/components/VelaShell";
+import { alerts, securityLayers } from "@/lib/vela-data";
+
+export default function DashboardPage() {
+  return (
+    <VelaShell active="Dashboard">
+      <PolicyDisplay />
+      <StatsRow />
+      <div className="grid-2">
+        <DecisionFeed limit={6} />
+        <ComplianceGauge />
+      </div>
+      <div className="equal-grid">
+        <section className="panel">
+          <div className="panel-head">
+            <span className="panel-title">Security Architecture</span>
+            <span className="tb-pill pill-green">3/3 ACTIVE</span>
+          </div>
+          <div className="panel-body">
+            {securityLayers.map((layer) => (
+              <div className="layer" key={layer.number}>
+                <div className="layer-num">{layer.number}</div>
+                <div>
+                  <div className="layer-name">
+                    {layer.name}
+                    <span className="tag active">ACTIVE</span>
+                  </div>
+                  <div className="layer-desc">{layer.description}</div>
+                  <div className="layer-stat">{layer.stat}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="panel">
+          <div className="panel-head">
+            <span className="panel-title">Farcaster Alerts</span>
+            <span className="tb-pill pill-dim">@VELA-AGENT</span>
+          </div>
+          <div className="panel-body page-stack">
+            {alerts.map((alert) => (
+              <div className={`alert-msg ${alert.tone}`} key={alert.title + alert.time}>
+                <div className="alert-head">
+                  <span className="alert-title">{alert.title}</span>
+                  <span className="alert-time">{alert.time}</span>
+                </div>
+                <div className="alert-body">{alert.body}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+    </VelaShell>
+  );
+}

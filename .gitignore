@@ -5,3 +5,7 @@ contracts/out/
 vela-docs-v2 (1).md
 node_modules/
 policy-engine/dist/
+frontend/ui-design*.html
+frontend/.next/
+frontend/out/
+frontend/.vercel/
