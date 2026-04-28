@@ -26,8 +26,7 @@ contract VelaVaultTest is Test {
 
     address public owner = makeAddr("owner");
     address public agentAddr = makeAddr("agent");
-    address public settlement = makeAddr("settlement");
-    address public slashing = makeAddr("slashing");
+    address public attestation = makeAddr("attestation");
     address public user1 = makeAddr("user1");
     address public stranger = makeAddr("stranger");
 
@@ -41,15 +40,14 @@ contract VelaVaultTest is Test {
         asset = new MockERC20();
         registry = new PolicyRegistry(owner);
 
-        vault = new VelaVault(asset, agentAddr, address(registry), settlement);
+        vault = new VelaVault(asset, agentAddr, address(registry), attestation);
 
         vm.prank(owner);
-        registry.setContracts(settlement, slashing);
+        registry.setContracts(attestation);
 
         // Register the agent
-        vm.deal(agentAddr, 1 ether);
         vm.prank(agentAddr);
-        registry.registerAgent{value: 0.05 ether}(POLICY_ROOT, POLICY_URI, 0);
+        registry.registerAgent(POLICY_ROOT, POLICY_URI, 0);
 
         // Fund users
         asset.mint(user1, 10_000e6);
@@ -71,7 +69,6 @@ contract VelaVaultTest is Test {
         assertEq(d.explanation, EXPLANATION);
         assertEq(d.evidenceCID, EVIDENCE_CID);
         assertEq(d.timestamp, block.timestamp);
-        assertEq(d.challengeDeadline, block.timestamp + 24 hours);
         assertEq(uint8(d.status), uint8(VelaVault.AttestationStatus.Pending));
         assertEq(d.attestationHash, bytes32(0));
     }
@@ -91,7 +88,7 @@ contract VelaVaultTest is Test {
 
     function test_commitDecision_emitsEvent() public {
         vm.expectEmit(true, false, false, true);
-        emit VelaVault.DecisionCommitted(0, DECISION_HASH, EXPLANATION, EVIDENCE_CID, block.timestamp + 24 hours);
+        emit VelaVault.DecisionCommitted(0, DECISION_HASH, EXPLANATION, EVIDENCE_CID);
         vm.prank(agentAddr);
         vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
     }
@@ -130,7 +127,7 @@ contract VelaVaultTest is Test {
         vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
 
         bytes32 attestHash = keccak256("attestation-proof");
-        vm.prank(settlement);
+        vm.prank(attestation);
         vault.markAttested(0, attestHash);
 
         VelaVault.DecisionRecord memory d = vault.getDecision(0);
@@ -145,7 +142,7 @@ contract VelaVaultTest is Test {
         bytes32 attestHash = keccak256("proof");
         vm.expectEmit(true, false, false, true);
         emit VelaVault.DecisionAttested(0, attestHash);
-        vm.prank(settlement);
+        vm.prank(attestation);
         vault.markAttested(0, attestHash);
     }
 
@@ -154,12 +151,12 @@ contract VelaVaultTest is Test {
         vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
 
         vm.prank(stranger);
-        vm.expectRevert(abi.encodeWithSelector(VelaVault.OnlySettlement.selector, stranger));
+        vm.expectRevert(abi.encodeWithSelector(VelaVault.OnlyAttestation.selector, stranger));
         vault.markAttested(0, keccak256("proof"));
     }
 
     function test_markAttested_revert_invalidId() public {
-        vm.prank(settlement);
+        vm.prank(attestation);
         vm.expectRevert(abi.encodeWithSelector(VelaVault.DecisionNotFound.selector, 99));
         vault.markAttested(99, keccak256("proof"));
     }
@@ -167,47 +164,12 @@ contract VelaVaultTest is Test {
     function test_markAttested_revert_alreadyAttested() public {
         vm.prank(agentAddr);
         vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
-        vm.prank(settlement);
+        vm.prank(attestation);
         vault.markAttested(0, keccak256("proof"));
 
-        vm.prank(settlement);
+        vm.prank(attestation);
         vm.expectRevert(abi.encodeWithSelector(VelaVault.AlreadyAttested.selector, 0));
         vault.markAttested(0, keccak256("proof2"));
-    }
-
-    function test_markAttested_revert_windowClosed() public {
-        vm.prank(agentAddr);
-        vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
-
-        // Fast-forward past 24hr window
-        vm.warp(block.timestamp + 25 hours);
-
-        vm.prank(settlement);
-        vm.expectRevert(abi.encodeWithSelector(VelaVault.ChallengeWindowClosed.selector, 0));
-        vault.markAttested(0, keccak256("proof"));
-    }
-
-    // ─── markChallenged ───────────────────────────────────────────────────────
-
-    function test_markChallenged_bySettlement() public {
-        vm.prank(agentAddr);
-        vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
-
-        vm.prank(settlement);
-        vault.markChallenged(0);
-
-        assertEq(uint8(vault.getDecision(0).status), uint8(VelaVault.AttestationStatus.Challenged));
-    }
-
-    function test_markChallenged_revert_alreadyAttested() public {
-        vm.prank(agentAddr);
-        vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
-        vm.prank(settlement);
-        vault.markAttested(0, keccak256("proof"));
-
-        vm.prank(settlement);
-        vm.expectRevert(abi.encodeWithSelector(VelaVault.AlreadyAttested.selector, 0));
-        vault.markChallenged(0);
     }
 
     // ─── ERC-4626 Deposit / Withdraw ──────────────────────────────────────────
@@ -278,25 +240,10 @@ contract VelaVaultTest is Test {
 
     // ─── Views ────────────────────────────────────────────────────────────────
 
-    function test_isChallengeable_trueWithinWindow() public {
+    function test_getDecisionHash_returnsCommittedHash() public {
         vm.prank(agentAddr);
         vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
-        assertTrue(vault.isChallengeable(0));
-    }
-
-    function test_isChallengeable_falseAfterWindow() public {
-        vm.prank(agentAddr);
-        vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
-        vm.warp(block.timestamp + 25 hours);
-        assertFalse(vault.isChallengeable(0));
-    }
-
-    function test_isChallengeable_falseAfterAttestation() public {
-        vm.prank(agentAddr);
-        vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
-        vm.prank(settlement);
-        vault.markAttested(0, keccak256("proof"));
-        assertFalse(vault.isChallengeable(0));
+        assertEq(vault.getDecisionHash(0), DECISION_HASH);
     }
 
     function test_recentDecisions_correctOrder() public {

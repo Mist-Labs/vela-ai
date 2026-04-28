@@ -81,8 +81,7 @@ contract VelaHookTest is Test {
     PolicyRegistry public registry;
 
     address public owner = makeAddr("owner");
-    address public treasury = makeAddr("treasury");
-    address public settlement = makeAddr("settlement");
+    address public attestation = makeAddr("attestation");
     address public agent = makeAddr("agent");
     address public operator; // same as agent.operator
     address public stranger = makeAddr("stranger");
@@ -105,13 +104,12 @@ contract VelaHookTest is Test {
         hook = new TestableVelaHook(address(poolManager), address(registry));
 
         vm.prank(owner);
-        registry.setContracts(settlement, address(hook));
+        registry.setContracts(attestation);
 
         // Register agent (operator = agent for simplicity)
-        vm.deal(agent, 1 ether);
         vm.prank(agent);
-        // MICRO tier: max $1000 USDC per tx, 0.05 ETH bond
-        registry.registerAgent{value: 0.05 ether}(POLICY_ROOT, POLICY_URI, 0);
+        // MICRO tier: max $1000 USDC per tx
+        registry.registerAgent(POLICY_ROOT, POLICY_URI, 0);
 
         // Build a test pool key
         testPoolKey = PoolKey({
@@ -225,9 +223,8 @@ contract VelaHookTest is Test {
     function test_beforeSwap_standardTier_higherCeiling() public {
         // Register a STANDARD tier agent (max $10K per tx)
         address proAgent = makeAddr("proAgent");
-        vm.deal(proAgent, 1 ether);
         vm.prank(proAgent);
-        registry.registerAgent{value: 0.2 ether}(POLICY_ROOT, POLICY_URI, 1);
+        registry.registerAgent(POLICY_ROOT, POLICY_URI, 1);
 
         // Whitelist pool for proAgent
         bytes32[] memory pools = new bytes32[](1);

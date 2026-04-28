@@ -16,19 +16,17 @@ contract VelaVault is ERC4626, ReentrancyGuard {
     // ─── Errors ───────────────────────────────────────────────────────────────
 
     error OnlyAgent(address caller);
-    error OnlySettlement(address caller);
+    error OnlyAttestation(address caller);
     error CircuitBreakerActive(address agent);
     error DecisionNotFound(uint256 id);
     error AlreadyAttested(uint256 id);
-    error ChallengeWindowClosed(uint256 id);
     error EmptyString(string field);
 
     // ─── Types ────────────────────────────────────────────────────────────────
 
     enum AttestationStatus {
         Pending,
-        Attested,
-        Challenged
+        Attested
     }
 
     struct DecisionRecord {
@@ -36,49 +34,41 @@ contract VelaVault is ERC4626, ReentrancyGuard {
         string explanation; // plain-English reason
         string evidenceCID; // 0G DA content address
         uint256 timestamp;
-        uint256 challengeDeadline;
         AttestationStatus status;
         bytes32 attestationHash; // set on attestation
     }
-
-    // ─── Constants ────────────────────────────────────────────────────────────
-
-    uint256 public constant CHALLENGE_WINDOW = 24 hours;
 
     // ─── State ────────────────────────────────────────────────────────────────
 
     PolicyRegistry public immutable registry;
     address public immutable agent;
-    address public immutable settlementContract;
+    address public immutable attestationContract;
 
     uint256 public totalDecisions;
     mapping(uint256 => DecisionRecord) private _decisions;
 
     // ─── Events ───────────────────────────────────────────────────────────────
 
-    event DecisionCommitted(
-        uint256 indexed id, bytes32 decisionHash, string explanation, string evidenceCID, uint256 challengeDeadline
-    );
+    event DecisionCommitted(uint256 indexed id, bytes32 decisionHash, string explanation, string evidenceCID);
     event DecisionAttested(uint256 indexed id, bytes32 attestationHash);
-    event DecisionChallenged(uint256 indexed id, address indexed challenger);
 
     // ─── Constructor ──────────────────────────────────────────────────────────
 
     /// @param asset_              ERC-20 deposited by users (e.g. USDC, WETH).
     /// @param agent_              Hot wallet / contract that executes decisions.
     /// @param registry_           Deployed PolicyRegistry.
-    /// @param settlementContract_ Deployed SettlementContract (can attest decisions).
-    constructor(IERC20 asset_, address agent_, address registry_, address settlementContract_)
+    /// @param attestationContract_ Deployed AttestationContract (can attest decisions).
+    constructor(IERC20 asset_, address agent_, address registry_, address attestationContract_)
         ERC4626(asset_)
         ERC20("Vela Vault Share", "vlSHARE")
     {
         require(agent_ != address(0), "VelaVault: zero agent");
         require(registry_ != address(0), "VelaVault: zero registry");
-        require(settlementContract_ != address(0), "VelaVault: zero settlement");
+        require(attestationContract_ != address(0), "VelaVault: zero attestation");
 
         agent = agent_;
         registry = PolicyRegistry(registry_);
-        settlementContract = settlementContract_;
+        attestationContract = attestationContract_;
     }
 
     // ─── Decision Feed ────────────────────────────────────────────────────────
@@ -102,39 +92,25 @@ contract VelaVault is ERC4626, ReentrancyGuard {
             explanation: explanation,
             evidenceCID: evidenceCID,
             timestamp: block.timestamp,
-            challengeDeadline: block.timestamp + CHALLENGE_WINDOW,
             status: AttestationStatus.Pending,
             attestationHash: bytes32(0)
         });
 
-        emit DecisionCommitted(id, decisionHash, explanation, evidenceCID, block.timestamp + CHALLENGE_WINDOW);
+        emit DecisionCommitted(id, decisionHash, explanation, evidenceCID);
     }
 
-    /// @notice SettlementContract marks a decision as cryptographically attested.
+    /// @notice AttestationContract marks a decision as cryptographically attested.
     function markAttested(uint256 id, bytes32 attestationHash) external {
-        if (msg.sender != settlementContract) revert OnlySettlement(msg.sender);
+        if (msg.sender != attestationContract) revert OnlyAttestation(msg.sender);
         if (id >= totalDecisions) revert DecisionNotFound(id);
 
         DecisionRecord storage d = _decisions[id];
         if (d.status != AttestationStatus.Pending) revert AlreadyAttested(id);
-        if (block.timestamp > d.challengeDeadline) revert ChallengeWindowClosed(id);
 
         d.status = AttestationStatus.Attested;
         d.attestationHash = attestationHash;
 
         emit DecisionAttested(id, attestationHash);
-    }
-
-    /// @notice SettlementContract marks a decision as challenged (violation detected).
-    function markChallenged(uint256 id) external {
-        if (msg.sender != settlementContract) revert OnlySettlement(msg.sender);
-        if (id >= totalDecisions) revert DecisionNotFound(id);
-
-        DecisionRecord storage d = _decisions[id];
-        if (d.status == AttestationStatus.Attested) revert AlreadyAttested(id);
-
-        d.status = AttestationStatus.Challenged;
-        emit DecisionChallenged(id, msg.sender);
     }
 
     function transfer(address to, uint256 value) public override(ERC20, IERC20) returns (bool) {
@@ -170,11 +146,9 @@ contract VelaVault is ERC4626, ReentrancyGuard {
         return _decisions[id];
     }
 
-    /// @notice Returns true if the decision's challenge window is still open.
-    function isChallengeable(uint256 id) external view returns (bool) {
-        if (id >= totalDecisions) return false;
-        DecisionRecord storage d = _decisions[id];
-        return (d.status == AttestationStatus.Pending && block.timestamp <= d.challengeDeadline);
+    function getDecisionHash(uint256 id) external view returns (bytes32) {
+        if (id >= totalDecisions) revert DecisionNotFound(id);
+        return _decisions[id].decisionHash;
     }
 
     /// @notice Convenience: latest N decisions (most-recent first). Cap at 50.

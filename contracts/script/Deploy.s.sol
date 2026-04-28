@@ -4,8 +4,7 @@ pragma solidity ^0.8.24;
 import {Script, console2} from "forge-std/Script.sol";
 import {PolicyRegistry} from "../src/PolicyRegistry.sol";
 import {VelaVault} from "../src/VelaVault.sol";
-import {SettlementContract} from "../src/SettlementContract.sol";
-import {SlashingModule} from "../src/SlashingModule.sol";
+import {AttestationContract} from "../src/AttestationContract.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Deploys the full Vela contract suite to Base Sepolia and prints
@@ -34,14 +33,12 @@ contract Deploy is Script {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
 
-        address treasury = vm.envOr("TREASURY_ADDRESS", deployer);
         address vaultAsset = vm.envOr("VAULT_ASSET_ADDRESS", USDC_BASE_SEPOLIA);
         address agentAddr = vm.envOr("AGENT_ADDRESS", deployer);
         address enclaveKey = vm.envOr("REGISTERED_ENCLAVE_KEY", address(0));
 
         console2.log("=== Vela Deploy ===");
         console2.log("Deployer:     ", deployer);
-        console2.log("Treasury:     ", treasury);
         console2.log("Vault asset:  ", vaultAsset);
         console2.log("Agent:        ", agentAddr);
         console2.log("Enclave key:  ", enclaveKey);
@@ -53,27 +50,22 @@ contract Deploy is Script {
         PolicyRegistry policyRegistry = new PolicyRegistry(deployer);
         console2.log("PolicyRegistry deployed:", address(policyRegistry));
 
-        // 2. SlashingModule
-        SlashingModule slashingModule = new SlashingModule(address(policyRegistry), treasury, deployer);
-        console2.log("SlashingModule deployed:", address(slashingModule));
+        // 2. AttestationContract
+        AttestationContract attestationContract = new AttestationContract(address(policyRegistry));
+        console2.log("AttestationContract deployed:", address(attestationContract));
 
-        // 3. SettlementContract
-        SettlementContract settlementContract = new SettlementContract(deployer);
-        console2.log("SettlementContract deployed:", address(settlementContract));
-
-        // 4. VelaVault (single-vault MVP)
+        // 3. VelaVault (single-vault MVP)
         VelaVault velaVault =
-            new VelaVault(IERC20(vaultAsset), agentAddr, address(policyRegistry), address(settlementContract));
+            new VelaVault(IERC20(vaultAsset), agentAddr, address(policyRegistry), address(attestationContract));
         console2.log("VelaVault deployed:", address(velaVault));
 
-        // 5. Wire contracts
-        policyRegistry.setContracts(address(settlementContract), address(slashingModule));
-        settlementContract.setContracts(address(policyRegistry), address(velaVault));
+        // 4. Wire contracts
+        policyRegistry.setContracts(address(attestationContract));
         console2.log("Contracts wired.");
 
-        // 6. Register enclave key (if provided)
+        // 5. Register enclave key (if provided)
         if (enclaveKey != address(0)) {
-            settlementContract.registerEnclaveKey(enclaveKey);
+            attestationContract.registerEnclaveKey(enclaveKey);
             console2.log("Enclave key registered:", enclaveKey);
         } else {
             console2.log("WARNING: No enclave key provided. Register manually after DCAP verification.");
@@ -86,8 +78,7 @@ contract Deploy is Script {
         console2.log("=== Add to .env ===");
         console2.log("POLICY_REGISTRY_ADDRESS=", address(policyRegistry));
         console2.log("VELA_VAULT_ADDRESS=", address(velaVault));
-        console2.log("SETTLEMENT_CONTRACT_ADDRESS=", address(settlementContract));
-        console2.log("SLASHING_MODULE_ADDRESS=", address(slashingModule));
+        console2.log("ATTESTATION_CONTRACT_ADDRESS=", address(attestationContract));
         console2.log("");
         console2.log("VelaHook not deployed here. Run HookMiner.s.sol next.");
     }

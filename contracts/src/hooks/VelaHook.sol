@@ -18,7 +18,7 @@ import {PolicyRegistry} from "../PolicyRegistry.sol";
 ///         inside `beforeSwap()` on every swap.
 ///
 /// @dev    Three invariants enforced before every swap:
-///         1. Agent has an active registered policy (not paused, not slashed).
+///         1. Agent has an active registered policy (not paused).
 ///         2. Circuit breaker is not triggered.
 ///         3. Swap's USDC value does not exceed the agent's tier ceiling.
 ///            Value is derived from the pool's own sqrtPriceX96 via StateLibrary -
@@ -134,7 +134,7 @@ contract VelaHook is IHooks {
         if (hookData.length < 32) revert NoHookData();
         address agent = abi.decode(hookData, (address));
 
-        // ── Check 1: agent is registered and not slashed ──────────────────────
+        // ── Check 1: agent is registered and not paused ───────────────────────
         if (registry.circuitBreakerTriggered(agent)) revert CircuitBreakerActive(agent);
         if (!registry.isActive(agent)) revert AgentNotActive(agent);
 
