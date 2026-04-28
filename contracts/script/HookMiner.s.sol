@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Script, console2}  from "forge-std/Script.sol";
-import {IPoolManager}      from "v4-core/src/interfaces/IPoolManager.sol";
-import {Hooks}             from "v4-core/src/libraries/Hooks.sol";
-import {VelaHook}          from "../src/hooks/VelaHook.sol";
+import {Script, console2} from "forge-std/Script.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {VelaHook} from "../src/hooks/VelaHook.sol";
 
 /// @notice Mines a CREATE2 salt that produces a VelaHook address with the
 ///         correct Hooks permission flags bits, then deploys the hook.
@@ -25,38 +25,30 @@ import {VelaHook}          from "../src/hooks/VelaHook.sol";
 /// After running, add to .env:
 ///   VELA_HOOK_ADDRESS=<printed address>
 contract HookMiner is Script {
-
     // Base Sepolia PoolManager (Uniswap v4 deployment)
-    address constant POOL_MANAGER = 0x05E73354cFDd6745C338b50BcFDfA14a7e33F5C3;
+    address constant POOL_MANAGER = 0x05e73354cFdD6745c338B50bcfDFA14A7E33F5c3;
 
     // Required hook flags for VelaHook: only beforeSwap = true
     uint160 constant REQUIRED_FLAGS = uint160(Hooks.BEFORE_SWAP_FLAG);
 
     function run() external {
-        uint256 deployerKey     = vm.envUint("PRIVATE_KEY");
-        address deployer        = vm.addr(deployerKey);
-        address policyRegistry  = vm.envAddress("POLICY_REGISTRY_ADDRESS");
+        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerKey);
+        address policyRegistry = vm.envAddress("POLICY_REGISTRY_ADDRESS");
 
         console2.log("Mining CREATE2 salt for VelaHook...");
         console2.log("Required flags:", REQUIRED_FLAGS);
         console2.log("PolicyRegistry:", policyRegistry);
 
         // Mine salt
-        (address hookAddr, bytes32 salt) = _mine(
-            deployer,
-            policyRegistry,
-            REQUIRED_FLAGS
-        );
+        (address hookAddr, bytes32 salt) = _mine(deployer, policyRegistry, REQUIRED_FLAGS);
 
         console2.log("Found salt:", uint256(salt));
         console2.log("Hook address:", hookAddr);
 
         // Deploy
         vm.startBroadcast(deployerKey);
-        VelaHook hook = new VelaHook{salt: salt}(
-            IPoolManager(POOL_MANAGER),
-            policyRegistry
-        );
+        VelaHook hook = new VelaHook{salt: salt}(IPoolManager(POOL_MANAGER), policyRegistry);
         vm.stopBroadcast();
 
         require(address(hook) == hookAddr, "HookMiner: address mismatch");
@@ -69,49 +61,40 @@ contract HookMiner is Script {
 
     /// @dev Iterates salts until the resulting CREATE2 address has the
     ///      required Hooks permission bits set. Off-chain computation only.
-    function _mine(
-        address deployer,
-        address registryAddr,
-        uint160 requiredFlags
-    ) internal pure returns (address hookAddr, bytes32 salt) {
-        bytes memory creationCode = abi.encodePacked(
-            type(VelaHook).creationCode,
-            abi.encode(POOL_MANAGER, registryAddr)
-        );
+    function _mine(address deployer, address registryAddr, uint160 requiredFlags)
+        internal
+        pure
+        returns (address hookAddr, bytes32 salt)
+    {
+        bytes memory creationCode =
+            abi.encodePacked(type(VelaHook).creationCode, abi.encode(POOL_MANAGER, registryAddr));
         bytes32 initCodeHash = keccak256(creationCode);
 
         uint256 nonce;
         while (true) {
-            salt     = bytes32(nonce);
+            salt = bytes32(nonce);
             hookAddr = _computeCreate2Address(deployer, salt, initCodeHash);
 
             // Check that required bits are set and no unexpected bits are set
-            uint160 addr    = uint160(hookAddr);
+            uint160 addr = uint160(hookAddr);
             uint160 allFlags = 0x3FFF; // all 14 permission bits in v4
-            if (
-                (addr & allFlags) == requiredFlags
-            ) {
+            if ((addr & allFlags) == requiredFlags) {
                 break;
             }
-            unchecked { nonce++; }
+            unchecked {
+                nonce++;
+            }
 
             // Safety: max 1M iterations
             require(nonce < 1_000_000, "HookMiner: no salt found");
         }
     }
 
-    function _computeCreate2Address(
-        address deployer,
-        bytes32 salt,
-        bytes32 initCodeHash
-    ) internal pure returns (address) {
-        return address(uint160(uint256(
-            keccak256(abi.encodePacked(
-                bytes1(0xff),
-                deployer,
-                salt,
-                initCodeHash
-            ))
-        )));
+    function _computeCreate2Address(address deployer, bytes32 salt, bytes32 initCodeHash)
+        internal
+        pure
+        returns (address)
+    {
+        return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), deployer, salt, initCodeHash)))));
     }
 }

@@ -8,7 +8,7 @@ import "../src/AttestationContract.sol";
 
 contract MockVault {
     mapping(uint256 => bytes32) private _hashes;
-    mapping(uint256 => bool)    private _attested;
+    mapping(uint256 => bool) private _attested;
 
     function setDecisionHash(uint256 id, bytes32 h) external {
         _hashes[id] = h;
@@ -46,27 +46,25 @@ contract MockRegistry {
 
 contract AttestationContractTest is Test {
     AttestationContract internal ac;
-    MockVault           internal vault;
-    MockRegistry        internal registry;
+    MockVault internal vault;
+    MockRegistry internal registry;
 
-    // Simulated 0G enclave key — generated deterministically for tests.
-    uint256 internal constant ENCLAVE_PRIVKEY =
-        0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
+    // Simulated 0G enclave key - generated deterministically for tests.
+    uint256 internal constant ENCLAVE_PRIVKEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     address internal enclaveAddr;
 
-    uint256 internal constant UNREGISTERED_PRIVKEY =
-        0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
+    uint256 internal constant UNREGISTERED_PRIVKEY = 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d;
     address internal unregisteredAddr;
 
     address internal constant AGENT = address(0xBEEF);
     uint256 internal constant DECISION_ID = 1;
 
     function setUp() public {
-        vault    = new MockVault();
+        vault = new MockVault();
         registry = new MockRegistry();
-        ac       = new AttestationContract(address(registry));
+        ac = new AttestationContract(address(registry));
 
-        enclaveAddr      = vm.addr(ENCLAVE_PRIVKEY);
+        enclaveAddr = vm.addr(ENCLAVE_PRIVKEY);
         unregisteredAddr = vm.addr(UNREGISTERED_PRIVKEY);
 
         // Register the simulated enclave key.
@@ -77,7 +75,7 @@ contract AttestationContractTest is Test {
 
     /**
      * @dev Sign contentHash with the given private key.
-     *      The enclave signs the raw keccak256 — NOT the Ethereum
+     *      The enclave signs the raw keccak256 - NOT the Ethereum
      *      personal_sign prefixed hash.
      */
     function _sign(uint256 privKey, bytes32 hash) internal pure returns (bytes memory) {
@@ -98,12 +96,7 @@ contract AttestationContractTest is Test {
         bytes memory sig = _sign(ENCLAVE_PRIVKEY, contentHash);
 
         vm.expectEmit(true, true, true, true);
-        emit AttestationContract.DecisionSettled(
-            address(vault),
-            DECISION_ID,
-            enclaveAddr,
-            contentHash
-        );
+        emit AttestationContract.DecisionSettled(address(vault), DECISION_ID, enclaveAddr, contentHash);
 
         ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, contentHash, sig);
 
@@ -115,7 +108,7 @@ contract AttestationContractTest is Test {
         // Settled flag set.
         assertTrue(ac.isSettled(address(vault), DECISION_ID));
         // Circuit breaker not triggered.
-        assertFalse(registry.circuitBroken);
+        assertFalse(registry.circuitBroken());
     }
 
     // ── test: unregistered signer reverts ─────────────────────────────────────
@@ -127,25 +120,20 @@ contract AttestationContractTest is Test {
         // Sign with a key that is NOT registered.
         bytes memory sig = _sign(UNREGISTERED_PRIVKEY, contentHash);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                AttestationContract.UnregisteredEnclave.selector,
-                unregisteredAddr
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(AttestationContract.UnregisteredEnclave.selector, unregisteredAddr));
         ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, contentHash, sig);
 
         // Nothing should have changed.
         assertFalse(vault.isAttested(DECISION_ID));
         assertFalse(ac.isSettled(address(vault), DECISION_ID));
-        assertFalse(registry.circuitBroken);
+        assertFalse(registry.circuitBroken());
     }
 
     // ── test: contentHash mismatch reverts ────────────────────────────────────
 
     function test_verifyAndSettle_hashMismatch_reverts() public {
         bytes32 committedHash = keccak256("original-decision-record");
-        bytes32 tamperedHash  = keccak256("tampered-decision-record");
+        bytes32 tamperedHash = keccak256("tampered-decision-record");
 
         // Vault stores the original hash.
         _setupDecision(committedHash);
@@ -153,13 +141,7 @@ contract AttestationContractTest is Test {
         // Enclave signs the tampered hash (attacker submits different content).
         bytes memory sig = _sign(ENCLAVE_PRIVKEY, tamperedHash);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                AttestationContract.HashMismatch.selector,
-                committedHash,
-                tamperedHash
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(AttestationContract.HashMismatch.selector, committedHash, tamperedHash));
         ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, tamperedHash, sig);
 
         assertFalse(vault.isAttested(DECISION_ID));
@@ -178,11 +160,7 @@ contract AttestationContractTest is Test {
 
         // Second call must revert.
         vm.expectRevert(
-            abi.encodeWithSelector(
-                AttestationContract.AlreadySettled.selector,
-                address(vault),
-                DECISION_ID
-            )
+            abi.encodeWithSelector(AttestationContract.AlreadySettled.selector, address(vault), DECISION_ID)
         );
         ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, contentHash, sig);
     }
@@ -190,19 +168,15 @@ contract AttestationContractTest is Test {
     // ── test: reportFailure triggers circuit breaker ──────────────────────────
 
     function test_reportFailure_triggersCircuitBreaker() public {
-        assertFalse(registry.circuitBroken);
+        assertFalse(registry.circuitBroken());
         assertEq(registry.invalidAttestations(), 0);
 
         vm.expectEmit(true, true, false, true);
-        emit AttestationContract.AttestationFailure(
-            address(vault),
-            DECISION_ID,
-            "TEE signature mismatch"
-        );
+        emit AttestationContract.AttestationFailure(address(vault), DECISION_ID, "TEE signature mismatch");
 
         ac.reportFailure(address(vault), AGENT, DECISION_ID, "TEE signature mismatch");
 
-        assertTrue(registry.circuitBroken);
+        assertTrue(registry.circuitBroken());
         assertEq(registry.invalidAttestations(), 1);
     }
 
@@ -244,12 +218,7 @@ contract AttestationContractTest is Test {
         // Revoke before settling.
         ac.revokeEnclaveKey(enclaveAddr);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                AttestationContract.UnregisteredEnclave.selector,
-                enclaveAddr
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(AttestationContract.UnregisteredEnclave.selector, enclaveAddr));
         ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, contentHash, sig);
     }
 

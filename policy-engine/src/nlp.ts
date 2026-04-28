@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import type {
   PolicyConstraints,
   ParsedPolicy,
@@ -9,92 +9,19 @@ import { POOL_IDS } from './types.js';
 
 // ─── Client (singleton) ──────────────────────────────────────────────────────
 
-let _client: Anthropic | null = null;
+let _client: OpenAI | null = null;
 
-function getClient(): Anthropic {
+function getClient(): OpenAI {
   if (!_client) {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set');
-    _client = new Anthropic({ apiKey });
+    const apiKey = process.env.MOONSHOT_API_KEY;
+    if (!apiKey) throw new Error('MOONSHOT_API_KEY is not set');
+    _client = new OpenAI({
+      apiKey,
+      baseURL: process.env.MOONSHOT_BASE_URL ?? 'https://api.moonshot.ai/v1',
+    });
   }
   return _client;
 }
-
-// ─── Tool definition ─────────────────────────────────────────────────────────
-
-const PARSE_POLICY_TOOL: Anthropic.Tool = {
-  name: 'parse_investment_policy',
-  description:
-    'Parse a natural language investment intent into typed policy constraints for a DeFi vault.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      max_allocation_per_pool_bps: {
-        type: 'number',
-        description:
-          'Max percentage of portfolio in any single pool, in basis points (100=1%, 2500=25%). Default: 2500.',
-      },
-      stop_loss_bps: {
-        type: 'number',
-        description:
-          'Stop-loss drawdown threshold in basis points (100=1%, 1500=15%). Trading halts when exceeded. Default: 2000.',
-      },
-      active_hours_start_utc: {
-        type: 'number',
-        description: 'UTC hour (0–23) when trading may begin. Default: 0.',
-      },
-      active_hours_end_utc: {
-        type: 'number',
-        description:
-          'UTC hour (1–24) when trading must stop. Use 24 for midnight. Default: 24.',
-      },
-      allowed_pools: {
-        type: 'array',
-        items: {
-          type: 'string',
-          enum: Object.values(POOL_IDS),
-        },
-        description:
-          'Pools the agent may trade. Default: ["ETH_USDC_V4"]. Add WBTC_USDC_V4 for BTC exposure.',
-      },
-      max_value_per_tx_usdc: {
-        type: 'number',
-        description:
-          'Max USDC value per trade. Tiers: MICRO ≤1000, STANDARD ≤10000, PRO ≤100000. Default: 10000.',
-      },
-      risk_profile: {
-        type: 'string',
-        enum: ['conservative', 'moderate', 'aggressive'] satisfies RiskProfile[],
-        description: 'Overall risk classification derived from the user intent.',
-      },
-      explanation: {
-        type: 'string',
-        description:
-          "2–3 sentence plain English explanation of how these constraints match the user's intent. Mention any trade-offs.",
-      },
-      estimated_apy_min: {
-        type: 'number',
-        description: 'Estimated minimum annual yield % for this policy.',
-      },
-      estimated_apy_max: {
-        type: 'number',
-        description: 'Estimated maximum annual yield % for this policy.',
-      },
-    },
-    required: [
-      'max_allocation_per_pool_bps',
-      'stop_loss_bps',
-      'active_hours_start_utc',
-      'active_hours_end_utc',
-      'allowed_pools',
-      'max_value_per_tx_usdc',
-      'risk_profile',
-      'explanation',
-      'estimated_apy_min',
-      'estimated_apy_max',
-    ],
-  },
-};
 
 // ─── System prompt ───────────────────────────────────────────────────────────
 
@@ -112,28 +39,42 @@ Mapping guidelines:
 - Portfolio with BTC mention → include WBTC_USDC_V4
 - Default: ETH_USDC_V4 only
 - When intent is ambiguous, be conservative.
-- Always call the parse_investment_policy tool. Never reply in prose.`;
+- Return ONLY a JSON object. No markdown, no prose, no code fences.
+
+Required JSON shape:
+{
+  "max_allocation_per_pool_bps": 2500,
+  "stop_loss_bps": 1500,
+  "active_hours_start_utc": 6,
+  "active_hours_end_utc": 24,
+  "allowed_pools": ["ETH_USDC_V4"],
+  "max_value_per_tx_usdc": 10000,
+  "risk_profile": "conservative",
+  "explanation": "2-3 sentence explanation.",
+  "estimated_apy_min": 4,
+  "estimated_apy_max": 9
+}`;
 
 // ─── Raw tool input type ─────────────────────────────────────────────────────
 
 interface ParseToolInput {
-  max_allocation_per_pool_bps: number;
-  stop_loss_bps: number;
-  active_hours_start_utc: number;
-  active_hours_end_utc: number;
-  allowed_pools: string[];
-  max_value_per_tx_usdc: number;
-  risk_profile: RiskProfile;
-  explanation: string;
-  estimated_apy_min: number;
-  estimated_apy_max: number;
+  max_allocation_per_pool_bps: unknown;
+  stop_loss_bps: unknown;
+  active_hours_start_utc: unknown;
+  active_hours_end_utc: unknown;
+  allowed_pools: unknown;
+  max_value_per_tx_usdc: unknown;
+  risk_profile: unknown;
+  explanation: unknown;
+  estimated_apy_min: unknown;
+  estimated_apy_max: unknown;
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * Compile a plain English investment intent into typed PolicyConstraints.
- * This is the ONLY call to the Claude API in the entire Vela system.
+ * This is the ONLY call to Kimi in the entire Vela policy setup path.
  * It runs once, at vault setup. All downstream logic is deterministic.
  */
 export async function parseIntent(rawIntent: string): Promise<ParsedPolicy> {
@@ -141,52 +82,87 @@ export async function parseIntent(rawIntent: string): Promise<ParsedPolicy> {
 
   const client = getClient();
 
-  const response = await client.messages.create({
-    model: 'claude-opus-4-6',
+  const response = await client.chat.completions.create({
+    model: process.env.KIMI_MODEL ?? 'kimi-k2.6',
+    temperature: 0,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: rawIntent.trim() },
+    ],
     max_tokens: 1024,
-    system: SYSTEM_PROMPT,
-    tools: [PARSE_POLICY_TOOL],
-    tool_choice: { type: 'tool', name: 'parse_investment_policy' },
-    messages: [{ role: 'user', content: rawIntent.trim() }],
   });
 
-  const toolUse = response.content.find(
-    (block): block is Anthropic.ToolUseBlock => block.type === 'tool_use',
-  );
-
-  if (!toolUse || toolUse.name !== 'parse_investment_policy') {
+  const content = response.choices[0]?.message.content;
+  if (!content) {
     throw new Error('NLP compilation failed: no structured output returned from model');
   }
 
-  const input = toolUse.input as ParseToolInput;
+  const input = parseModelJson(content);
 
   // Clamp all values to valid ranges — never trust raw LLM output for on-chain commitments
   const constraints: PolicyConstraints = {
-    max_allocation_per_pool_bps: clamp(input.max_allocation_per_pool_bps, 100, 10_000),
-    stop_loss_bps:               clamp(input.stop_loss_bps, 100, 10_000),
-    active_hours_start_utc:      clamp(input.active_hours_start_utc, 0, 23),
-    active_hours_end_utc:        clamp(input.active_hours_end_utc, 1, 24),
+    max_allocation_per_pool_bps: clampNumber(input.max_allocation_per_pool_bps, 100, 10_000),
+    stop_loss_bps:               clampNumber(input.stop_loss_bps, 100, 10_000),
+    active_hours_start_utc:      clampNumber(input.active_hours_start_utc, 0, 23),
+    active_hours_end_utc:        clampNumber(input.active_hours_end_utc, 1, 24),
     allowed_pools:               sanitizePools(input.allowed_pools),
-    max_value_per_tx_usdc:       Math.max(100, input.max_value_per_tx_usdc),
-    risk_profile:                input.risk_profile,
+    max_value_per_tx_usdc:       Math.max(100, toFiniteNumber(input.max_value_per_tx_usdc, 10_000)),
+    risk_profile:                sanitizeRiskProfile(input.risk_profile),
   };
 
   return {
     constraints,
-    explanation:         input.explanation,
-    estimated_apy_range: [input.estimated_apy_min, input.estimated_apy_max],
+    explanation:         sanitizeText(input.explanation, 'Policy compiled from user intent.'),
+    estimated_apy_range: [
+      clampNumber(input.estimated_apy_min, 0, 100),
+      clampNumber(input.estimated_apy_max, 0, 100),
+    ],
     raw_intent:          rawIntent,
   };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(value)));
+function parseModelJson(content: string): ParseToolInput {
+  try {
+    const parsed = JSON.parse(content) as Partial<ParseToolInput>;
+    return {
+      max_allocation_per_pool_bps: parsed.max_allocation_per_pool_bps,
+      stop_loss_bps:               parsed.stop_loss_bps,
+      active_hours_start_utc:      parsed.active_hours_start_utc,
+      active_hours_end_utc:        parsed.active_hours_end_utc,
+      allowed_pools:               parsed.allowed_pools,
+      max_value_per_tx_usdc:       parsed.max_value_per_tx_usdc,
+      risk_profile:                parsed.risk_profile,
+      explanation:                 parsed.explanation,
+      estimated_apy_min:           parsed.estimated_apy_min,
+      estimated_apy_max:           parsed.estimated_apy_max,
+    };
+  } catch {
+    throw new Error('NLP compilation failed: model returned invalid JSON');
+  }
 }
 
-function sanitizePools(pools: string[]): PoolIdentifier[] {
+function clampNumber(value: unknown, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(toFiniteNumber(value, min))));
+}
+
+function toFiniteNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function sanitizePools(pools: unknown): PoolIdentifier[] {
   const valid = Object.values(POOL_IDS) as string[];
-  const filtered = pools.filter((p) => valid.includes(p)) as PoolIdentifier[];
+  const input = Array.isArray(pools) ? pools : [];
+  const filtered = input.filter((p): p is PoolIdentifier => typeof p === 'string' && valid.includes(p));
   return filtered.length > 0 ? filtered : ['ETH_USDC_V4'];
+}
+
+function sanitizeRiskProfile(value: unknown): RiskProfile {
+  return value === 'moderate' || value === 'aggressive' ? value : 'conservative';
+}
+
+function sanitizeText(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
 }

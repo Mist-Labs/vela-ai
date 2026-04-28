@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {BaseHook}             from "v4-periphery/src/base/hooks/BaseHook.sol";
-import {IPoolManager}         from "v4-core/src/interfaces/IPoolManager.sol";
-import {Hooks}                from "v4-core/src/libraries/Hooks.sol";
-import {PoolKey}              from "v4-core/src/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {BalanceDelta}         from "v4-core/src/types/BalanceDelta.sol";
-import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
-import {StateLibrary}         from "v4-core/src/libraries/StateLibrary.sol";
-import {FixedPointMathLib}    from "solmate/src/utils/FixedPointMathLib.sol";
-import {PolicyRegistry}       from "../PolicyRegistry.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
+import {ModifyLiquidityParams, SwapParams} from "v4-core/types/PoolOperation.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
+import {PolicyRegistry} from "../PolicyRegistry.sol";
 
 /// @title  VelaHook
 /// @notice Uniswap v4 hook that enforces Vela agent behavioral policy
@@ -20,7 +21,7 @@ import {PolicyRegistry}       from "../PolicyRegistry.sol";
 ///         1. Agent has an active registered policy (not paused, not slashed).
 ///         2. Circuit breaker is not triggered.
 ///         3. Swap's USDC value does not exceed the agent's tier ceiling.
-///            Value is derived from the pool's own sqrtPriceX96 via StateLibrary —
+///            Value is derived from the pool's own sqrtPriceX96 via StateLibrary -
 ///            no external oracle dependency.
 ///         4. Target pool is on the agent's registered allowlist.
 ///
@@ -34,9 +35,9 @@ import {PolicyRegistry}       from "../PolicyRegistry.sol";
 ///
 ///         DEPLOYMENT: The hook address must be computed via HookMiner so that
 ///         the address flags encode `beforeSwap = true`. Use script/HookMiner.s.sol.
-contract VelaHook is BaseHook {
-    using PoolIdLibrary    for PoolKey;
-    using StateLibrary     for IPoolManager;
+contract VelaHook is IHooks {
+    using PoolIdLibrary for PoolKey;
+    using StateLibrary for IPoolManager;
     using FixedPointMathLib for uint256;
 
     // ─── Errors ───────────────────────────────────────────────────────────────
@@ -63,6 +64,7 @@ contract VelaHook is BaseHook {
     // ─── State ────────────────────────────────────────────────────────────────
 
     PolicyRegistry public immutable registry;
+    IPoolManager public immutable poolManager;
 
     /// @notice Per-agent pool allowlist. agent => poolId => allowed.
     ///         Populated by the agent's operator at registration time.
@@ -74,31 +76,38 @@ contract VelaHook is BaseHook {
 
     // ─── Constructor ──────────────────────────────────────────────────────────
 
-    constructor(IPoolManager poolManager_, address registry_) BaseHook(poolManager_) {
+    constructor(IPoolManager poolManager_, address registry_) {
+        if (address(poolManager_) == address(0)) revert ZeroAddress();
         if (registry_ == address(0)) revert ZeroAddress();
+        poolManager = poolManager_;
         registry = PolicyRegistry(registry_);
+    }
+
+    modifier onlyPoolManager() {
+        if (msg.sender != address(poolManager)) revert ZeroAddress();
+        _;
     }
 
     // ─── Hook Permissions ─────────────────────────────────────────────────────
 
     /// @notice Only beforeSwap is enabled. All other permissions are false.
-    ///         The hook address MUST encode this permission set in its bits —
+    ///         The hook address MUST encode this permission set in its bits -
     ///         use HookMiner.s.sol to compute the correct CREATE2 salt.
-    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
+    function getHookPermissions() public pure returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
-            beforeInitialize:               false,
-            afterInitialize:                false,
-            beforeAddLiquidity:             false,
-            afterAddLiquidity:              false,
-            beforeRemoveLiquidity:          false,
-            afterRemoveLiquidity:           false,
-            beforeSwap:                     true,   
-            afterSwap:                      false,
-            beforeDonate:                   false,
-            afterDonate:                    false,
-            beforeSwapReturnDelta:          false,
-            afterSwapReturnDelta:           false,
-            afterAddLiquidityReturnDelta:   false,
+            beforeInitialize: false,
+            afterInitialize: false,
+            beforeAddLiquidity: false,
+            afterAddLiquidity: false,
+            beforeRemoveLiquidity: false,
+            afterRemoveLiquidity: false,
+            beforeSwap: true,
+            afterSwap: false,
+            beforeDonate: false,
+            afterDonate: false,
+            beforeSwapReturnDelta: false,
+            afterSwapReturnDelta: false,
+            afterAddLiquidityReturnDelta: false,
             afterRemoveLiquidityReturnDelta: false
         });
     }
@@ -112,13 +121,12 @@ contract VelaHook is BaseHook {
     /// @param  params    Swap parameters including amountSpecified.
     /// @param  hookData  ABI-encoded agent address: abi.encode(address agent).
     function beforeSwap(
-        address, /* sender — unused */
+        address, /* sender - unused */
         PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
+        SwapParams calldata params,
         bytes calldata hookData
     )
         external
-        override
         onlyPoolManager
         returns (bytes4, BeforeSwapDelta, uint24)
     {
@@ -127,33 +135,92 @@ contract VelaHook is BaseHook {
         address agent = abi.decode(hookData, (address));
 
         // ── Check 1: agent is registered and not slashed ──────────────────────
-        if (!registry.isActive(agent)) revert AgentNotActive(agent);
-
-        // ── Check 2: circuit breaker not triggered ────────────────────────────
         if (registry.circuitBreakerTriggered(agent)) revert CircuitBreakerActive(agent);
+        if (!registry.isActive(agent)) revert AgentNotActive(agent);
 
         // ── Check 3: pool is on the agent's allowlist ─────────────────────────
         bytes32 poolId = bytes32(PoolId.unwrap(key.toId()));
         if (!allowedPools[agent][poolId]) revert PoolNotAllowed(poolId);
 
         // ── Check 4: swap value within policy tier ceiling ────────────────────
-        // Read sqrtPriceX96 directly from v4 pool state — no external oracle.
+        // Read sqrtPriceX96 directly from v4 pool state - no external oracle.
         (uint160 sqrtPriceX96,,,) = poolManager.getSlot0(key.toId());
 
-        uint256 absAmount = params.amountSpecified < 0
-            ? uint256(-params.amountSpecified)
-            : uint256(params.amountSpecified);
+        uint256 absAmount =
+            params.amountSpecified < 0 ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
 
         uint256 swapValueUsdc = _sqrtPriceToUsdc(sqrtPriceX96, absAmount);
 
-        PolicyRegistry.TierConfig memory cfg =
-            registry.getTierConfig(uint8(registry.getPolicy(agent).tier));
+        PolicyRegistry.TierConfig memory cfg = registry.getTierConfig(uint8(registry.getPolicy(agent).tier));
 
-        if (swapValueUsdc > cfg.maxValuePerTxUsdc) {
-            revert ValueExceedsPolicy(swapValueUsdc, cfg.maxValuePerTxUsdc);
+        uint256 maxValueUsdc = cfg.maxValuePerTxUsdc * USDC_DECIMALS_SCALAR;
+        if (swapValueUsdc > maxValueUsdc) {
+            revert ValueExceedsPolicy(swapValueUsdc, maxValueUsdc);
         }
 
-        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+    }
+
+    function beforeInitialize(address, PoolKey calldata, uint160) external pure returns (bytes4) {
+        return IHooks.beforeInitialize.selector;
+    }
+
+    function afterInitialize(address, PoolKey calldata, uint160, int24) external pure returns (bytes4) {
+        return IHooks.afterInitialize.selector;
+    }
+
+    function beforeAddLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
+        external
+        pure
+        returns (bytes4)
+    {
+        return IHooks.beforeAddLiquidity.selector;
+    }
+
+    function afterAddLiquidity(
+        address,
+        PoolKey calldata,
+        ModifyLiquidityParams calldata,
+        BalanceDelta,
+        BalanceDelta,
+        bytes calldata
+    ) external pure returns (bytes4, BalanceDelta) {
+        return (IHooks.afterAddLiquidity.selector, BalanceDelta.wrap(0));
+    }
+
+    function beforeRemoveLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
+        external
+        pure
+        returns (bytes4)
+    {
+        return IHooks.beforeRemoveLiquidity.selector;
+    }
+
+    function afterRemoveLiquidity(
+        address,
+        PoolKey calldata,
+        ModifyLiquidityParams calldata,
+        BalanceDelta,
+        BalanceDelta,
+        bytes calldata
+    ) external pure returns (bytes4, BalanceDelta) {
+        return (IHooks.afterRemoveLiquidity.selector, BalanceDelta.wrap(0));
+    }
+
+    function afterSwap(address, PoolKey calldata, SwapParams calldata, BalanceDelta, bytes calldata)
+        external
+        pure
+        returns (bytes4, int128)
+    {
+        return (IHooks.afterSwap.selector, 0);
+    }
+
+    function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) {
+        return IHooks.beforeDonate.selector;
+    }
+
+    function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata) external pure returns (bytes4) {
+        return IHooks.afterDonate.selector;
     }
 
     // ─── Allowlist Management ─────────────────────────────────────────────────
@@ -165,11 +232,7 @@ contract VelaHook is BaseHook {
     /// @param  agent    The agent address whose allowlist is being updated.
     /// @param  poolIds  Array of pool IDs (bytes32(PoolId.unwrap(key.toId()))).
     /// @param  allowed  Corresponding allow/deny flags.
-    function setAllowedPools(
-        address agent,
-        bytes32[] calldata poolIds,
-        bool[]    calldata allowed
-    ) external {
+    function setAllowedPools(address agent, bytes32[] calldata poolIds, bool[] calldata allowed) external {
         require(poolIds.length == allowed.length, "VelaHook: length mismatch");
 
         // Only the registered operator can update their agent's allowlist
@@ -204,17 +267,14 @@ contract VelaHook is BaseHook {
     ///         at uint128 and accept minor precision loss on extreme prices.
     ///
     ///         Production note: replace with FullMath.mulDiv for exact precision.
-    function _sqrtPriceToUsdc(uint160 sqrtPriceX96, uint256 amount)
-        internal
-        pure
-        returns (uint256 valueUsdc)
-    {
+    function _sqrtPriceToUsdc(uint160 sqrtPriceX96, uint256 amount) internal pure returns (uint256 valueUsdc) {
         if (sqrtPriceX96 == 0 || amount == 0) return 0;
 
         // price = sqrtPriceX96^2 / Q96^2
         // Use uint256 arithmetic; cap sqrtPriceX96 to prevent overflow
-        // sqrtPriceX96 fits in 160 bits, squaring needs 320 bits — use mulDiv
-        uint256 priceNumerator   = uint256(sqrtPriceX96) * uint256(sqrtPriceX96);
+        // sqrtPriceX96 fits in 160 bits, squaring needs 320 bits - use mulDiv
+        uint256 boundedSqrtPrice = sqrtPriceX96 > type(uint128).max ? type(uint128).max : uint256(sqrtPriceX96);
+        uint256 priceNumerator = boundedSqrtPrice * boundedSqrtPrice;
         uint256 priceDenominator = Q96 * Q96; // 2^192
 
         // Scaling: token0 = 18 decimals, token1 (USDC) = 6 decimals

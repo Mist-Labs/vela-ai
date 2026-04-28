@@ -17,7 +17,7 @@ interface IPolicyRegistry {
 /**
  * @title AttestationContract
  * @notice Verifies that each trade decision was produced by a registered
- *         0G Sealed Inference enclave. No challenge window — verification
+ *         0G Sealed Inference enclave. No challenge window - verification
  *         is immediate. Failures trigger instant circuit break via
  *         PolicyRegistry.
  *
@@ -27,7 +27,7 @@ interface IPolicyRegistry {
  *   2. verifyAndSettle() recovers the signer from the response JSON hash
  *      and the enclave signature. Signer must be a registered enclave key.
  *   3. contentHash must match the decisionHash committed on-chain in
- *      VelaVault — proves the settled response is the committed 0G DA record.
+ *      VelaVault - proves the settled response is the committed 0G DA record.
  *   4. On any failure the watchtower calls reportFailure() which triggers
  *      the circuit breaker on PolicyRegistry instantly.
  */
@@ -56,16 +56,9 @@ contract AttestationContract is Ownable {
     event EnclaveKeyRegistered(address indexed enclaveKey);
     event EnclaveKeyRevoked(address indexed enclaveKey);
     event DecisionSettled(
-        address indexed vault,
-        uint256 indexed decisionId,
-        address indexed enclave,
-        bytes32 contentHash
+        address indexed vault, uint256 indexed decisionId, address indexed enclave, bytes32 contentHash
     );
-    event AttestationFailure(
-        address indexed vault,
-        uint256 indexed decisionId,
-        string reason
-    );
+    event AttestationFailure(address indexed vault, uint256 indexed decisionId, string reason);
 
     // ─────────────────────────────── constructor ─────────────────────────────
 
@@ -113,13 +106,9 @@ contract AttestationContract is Ownable {
      *   - Unregistered enclave signer
      *   - contentHash != committed decisionHash
      */
-    function verifyAndSettle(
-        address vault,
-        address agent,
-        uint256 decisionId,
-        bytes32 contentHash,
-        bytes calldata sig
-    ) external {
+    function verifyAndSettle(address vault, address agent, uint256 decisionId, bytes32 contentHash, bytes calldata sig)
+        external
+    {
         if (settled[vault][decisionId]) {
             revert AlreadySettled(vault, decisionId);
         }
@@ -156,14 +145,9 @@ contract AttestationContract is Ownable {
      * @param decisionId The decision ID that failed.
      * @param reason     Human-readable failure reason for the event log.
      */
-    function reportFailure(
-        address vault,
-        address agent,
-        uint256 decisionId,
-        string calldata reason
-    ) external {
+    function reportFailure(address vault, address agent, uint256 decisionId, string calldata reason) external {
         // In production: restrict to watchtower role via AccessControl.
-        // For the hackathon: anyone can report — watchtower is the caller.
+        // For the hackathon: anyone can report - watchtower is the caller.
         emit AttestationFailure(vault, decisionId, reason);
         registry.recordAttestation(agent, false);
         registry.triggerCircuitBreaker(agent);

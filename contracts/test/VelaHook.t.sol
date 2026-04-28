@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test, console2}        from "forge-std/Test.sol";
-import {IPoolManager}          from "v4-core/src/interfaces/IPoolManager.sol";
-import {PoolKey}               from "v4-core/src/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {Currency}              from "v4-core/src/types/Currency.sol";
-import {IHooks}                from "v4-core/src/interfaces/IHooks.sol";
-import {Hooks}                 from "v4-core/src/libraries/Hooks.sol";
-import {PolicyRegistry}        from "../src/PolicyRegistry.sol";
-import {VelaHook}              from "../src/hooks/VelaHook.sol";
+import {Test, console2} from "forge-std/Test.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {SwapParams} from "v4-core/types/PoolOperation.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {Currency} from "v4-core/types/Currency.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {PolicyRegistry} from "../src/PolicyRegistry.sol";
+import {VelaHook} from "../src/hooks/VelaHook.sol";
 
 /// @dev Minimal IPoolManager stub that lets us control getSlot0 output.
 contract MockPoolManager {
@@ -33,44 +34,39 @@ contract MockPoolManager {
 
 /// @dev Deployable VelaHook wrapper for testing (bypasses CREATE2 address check).
 contract TestableVelaHook is VelaHook {
-    constructor(address poolManager_, address registry_)
-        VelaHook(IPoolManager(poolManager_), registry_) {}
+    constructor(address poolManager_, address registry_) VelaHook(IPoolManager(poolManager_), registry_) {}
 
     /// @dev Expose internal price math for unit testing.
-    function exposedSqrtPriceToUsdc(uint160 sqrtPriceX96, uint256 amount)
-        external pure returns (uint256)
-    {
+    function exposedSqrtPriceToUsdc(uint160 sqrtPriceX96, uint256 amount) external pure returns (uint256) {
         return _sqrtPriceToUsdc(sqrtPriceX96, amount);
     }
 
     /// @dev Allow tests to call beforeSwap directly without the onlyPoolManager modifier.
-    function testBeforeSwap(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        bytes calldata hookData
-    ) external view returns (bytes4 selector, uint256 valueUsdc) {
+    function testBeforeSwap(address, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
+        external
+        view
+        returns (bytes4 selector, uint256 valueUsdc)
+    {
         // Re-implement enforcement logic without the modifier for test isolation
         if (hookData.length < 32) revert NoHookData();
         address agent = abi.decode(hookData, (address));
 
         PolicyRegistry reg = PolicyRegistry(address(registry));
-        if (!reg.isActive(agent)) revert AgentNotActive(agent);
         if (reg.circuitBreakerTriggered(agent)) revert CircuitBreakerActive(agent);
+        if (!reg.isActive(agent)) revert AgentNotActive(agent);
 
         bytes32 poolId = bytes32(PoolId.unwrap(key.toId()));
         if (!allowedPools[agent][poolId]) revert PoolNotAllowed(poolId);
 
         (uint160 sqrtPriceX96,,,) = MockPoolManager(address(poolManager)).getSlot0(poolId);
-        uint256 absAmount = params.amountSpecified < 0
-            ? uint256(-params.amountSpecified)
-            : uint256(params.amountSpecified);
+        uint256 absAmount =
+            params.amountSpecified < 0 ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
 
         valueUsdc = _sqrtPriceToUsdc(sqrtPriceX96, absAmount);
-        PolicyRegistry.TierConfig memory cfg =
-            reg.getTierConfig(uint8(reg.getPolicy(agent).tier));
-        if (valueUsdc > cfg.maxValuePerTxUsdc) {
-            revert ValueExceedsPolicy(valueUsdc, cfg.maxValuePerTxUsdc);
+        PolicyRegistry.TierConfig memory cfg = reg.getTierConfig(uint8(reg.getPolicy(agent).tier));
+        uint256 maxValueUsdc = cfg.maxValuePerTxUsdc * 1e6;
+        if (valueUsdc > maxValueUsdc) {
+            revert ValueExceedsPolicy(valueUsdc, maxValueUsdc);
         }
 
         return (VelaHook.beforeSwap.selector, valueUsdc);
@@ -81,18 +77,18 @@ contract VelaHookTest is Test {
     using PoolIdLibrary for PoolKey;
 
     TestableVelaHook public hook;
-    MockPoolManager  public poolManager;
-    PolicyRegistry   public registry;
+    MockPoolManager public poolManager;
+    PolicyRegistry public registry;
 
-    address public owner      = makeAddr("owner");
-    address public treasury   = makeAddr("treasury");
+    address public owner = makeAddr("owner");
+    address public treasury = makeAddr("treasury");
     address public settlement = makeAddr("settlement");
-    address public agent      = makeAddr("agent");
-    address public operator;  // same as agent.operator
-    address public stranger   = makeAddr("stranger");
+    address public agent = makeAddr("agent");
+    address public operator; // same as agent.operator
+    address public stranger = makeAddr("stranger");
 
     bytes32 constant POLICY_ROOT = keccak256("policy");
-    string  constant POLICY_URI  = "0g://policy";
+    string constant POLICY_URI = "0g://policy";
 
     PoolKey public testPoolKey;
     bytes32 public testPoolId;
@@ -101,12 +97,12 @@ contract VelaHookTest is Test {
     // sqrtPrice = sqrt(2000 * 1e6 / 1e18) * 2^96
     // = sqrt(2e-12) * 2^96 ≈ 1.414e-6 * 2^96
     // Approximate value for $2000/ETH: ~3961408125713216879677197516800
-    uint160 constant SQRT_PRICE_2000 = 3_961_408_125_713_216_879_677_197_516_800;
+    uint160 constant SQRT_PRICE_2000 = 3_543_191_142_285_914_203_689_109_514_473;
 
     function setUp() public {
         poolManager = new MockPoolManager();
-        registry    = new PolicyRegistry(owner);
-        hook        = new TestableVelaHook(address(poolManager), address(registry));
+        registry = new PolicyRegistry(owner);
+        hook = new TestableVelaHook(address(poolManager), address(registry));
 
         vm.prank(owner);
         registry.setContracts(settlement, address(hook));
@@ -128,9 +124,9 @@ contract VelaHookTest is Test {
         testPoolId = bytes32(PoolId.unwrap(testPoolKey.toId()));
 
         // Whitelist the pool for the agent
-        bytes32[] memory pools   = new bytes32[](1);
-        bool[]    memory allowed = new bool[](1);
-        pools[0]   = testPoolId;
+        bytes32[] memory pools = new bytes32[](1);
+        bool[] memory allowed = new bool[](1);
+        pools[0] = testPoolId;
         allowed[0] = true;
         vm.prank(agent);
         hook.setAllowedPools(agent, pools, allowed);
@@ -141,12 +137,8 @@ contract VelaHookTest is Test {
 
     // ─── Helpers ──────────────────────────────────────────────────────────────
 
-    function _swapParams(int256 amount) internal pure returns (IPoolManager.SwapParams memory) {
-        return IPoolManager.SwapParams({
-            zeroForOne:        true,
-            amountSpecified:   amount,
-            sqrtPriceLimitX96: 0
-        });
+    function _swapParams(int256 amount) internal pure returns (SwapParams memory) {
+        return SwapParams({zeroForOne: true, amountSpecified: amount, sqrtPriceLimitX96: 0});
     }
 
     function _hookData(address a) internal pure returns (bytes memory) {
@@ -180,18 +172,16 @@ contract VelaHookTest is Test {
     // ─── beforeSwap enforcement ───────────────────────────────────────────────
 
     function test_beforeSwap_compliantSwap_succeeds() public view {
-        // 0.1 ETH swap at $2000 = ~$200 USDC — well within $1000 MICRO ceiling
-        IPoolManager.SwapParams memory params = _swapParams(-0.1 ether);
+        // 0.1 ETH swap at $2000 = ~$200 USDC - well within $1000 MICRO ceiling
+        SwapParams memory params = _swapParams(-0.1 ether);
         (bytes4 sel,) = hook.testBeforeSwap(agent, testPoolKey, params, _hookData(agent));
         assertEq(sel, VelaHook.beforeSwap.selector);
     }
 
     function test_beforeSwap_revert_agentNotActive() public {
         // Stranger has no registered policy
-        IPoolManager.SwapParams memory params = _swapParams(-0.1 ether);
-        vm.expectRevert(
-            abi.encodeWithSelector(VelaHook.AgentNotActive.selector, stranger)
-        );
+        SwapParams memory params = _swapParams(-0.1 ether);
+        vm.expectRevert(abi.encodeWithSelector(VelaHook.AgentNotActive.selector, stranger));
         hook.testBeforeSwap(stranger, testPoolKey, params, _hookData(stranger));
     }
 
@@ -199,10 +189,8 @@ contract VelaHookTest is Test {
         vm.prank(agent);
         registry.triggerCircuitBreaker(agent);
 
-        IPoolManager.SwapParams memory params = _swapParams(-0.1 ether);
-        vm.expectRevert(
-            abi.encodeWithSelector(VelaHook.CircuitBreakerActive.selector, agent)
-        );
+        SwapParams memory params = _swapParams(-0.1 ether);
+        vm.expectRevert(abi.encodeWithSelector(VelaHook.CircuitBreakerActive.selector, agent));
         hook.testBeforeSwap(agent, testPoolKey, params, _hookData(agent));
     }
 
@@ -217,26 +205,19 @@ contract VelaHookTest is Test {
         });
         bytes32 otherPoolId = bytes32(PoolId.unwrap(otherKey.toId()));
 
-        vm.expectRevert(
-            abi.encodeWithSelector(VelaHook.PoolNotAllowed.selector, otherPoolId)
-        );
-        hook.testBeforeSwap(
-            agent,
-            otherKey,
-            _swapParams(-0.1 ether),
-            _hookData(agent)
-        );
+        vm.expectRevert(abi.encodeWithSelector(VelaHook.PoolNotAllowed.selector, otherPoolId));
+        hook.testBeforeSwap(agent, otherKey, _swapParams(-0.1 ether), _hookData(agent));
     }
 
     function test_beforeSwap_revert_valueExceedsPolicy() public {
-        // 0.6 ETH at $2000 = ~$1200 USDC — exceeds $1000 MICRO ceiling
-        IPoolManager.SwapParams memory params = _swapParams(-0.6 ether);
+        // 0.6 ETH at $2000 = ~$1200 USDC - exceeds $1000 MICRO ceiling
+        SwapParams memory params = _swapParams(-0.6 ether);
         vm.expectRevert(); // ValueExceedsPolicy
         hook.testBeforeSwap(agent, testPoolKey, params, _hookData(agent));
     }
 
     function test_beforeSwap_revert_noHookData() public {
-        IPoolManager.SwapParams memory params = _swapParams(-0.1 ether);
+        SwapParams memory params = _swapParams(-0.1 ether);
         vm.expectRevert(VelaHook.NoHookData.selector);
         hook.testBeforeSwap(agent, testPoolKey, params, bytes(""));
     }
@@ -249,15 +230,15 @@ contract VelaHookTest is Test {
         registry.registerAgent{value: 0.2 ether}(POLICY_ROOT, POLICY_URI, 1);
 
         // Whitelist pool for proAgent
-        bytes32[] memory pools   = new bytes32[](1);
-        bool[]    memory allowed = new bool[](1);
-        pools[0]   = testPoolId;
+        bytes32[] memory pools = new bytes32[](1);
+        bool[] memory allowed = new bool[](1);
+        pools[0] = testPoolId;
         allowed[0] = true;
         vm.prank(proAgent);
         hook.setAllowedPools(proAgent, pools, allowed);
 
-        // 4 ETH at $2000 = ~$8000 USDC — within $10K STANDARD ceiling
-        IPoolManager.SwapParams memory params = _swapParams(-4 ether);
+        // 4 ETH at $2000 = ~$8000 USDC - within $10K STANDARD ceiling
+        SwapParams memory params = _swapParams(-4 ether);
         (bytes4 sel,) = hook.testBeforeSwap(proAgent, testPoolKey, params, _hookData(proAgent));
         assertEq(sel, VelaHook.beforeSwap.selector);
     }
@@ -265,14 +246,14 @@ contract VelaHookTest is Test {
     function test_beforeSwap_exactlyAtCeiling_succeeds() public view {
         // At $2000/ETH, 0.5 ETH = ~$1000 USDC = exactly the MICRO ceiling
         // Should succeed (<=, not <)
-        IPoolManager.SwapParams memory params = _swapParams(-0.5 ether);
+        SwapParams memory params = _swapParams(-0.5 ether);
         (bytes4 sel,) = hook.testBeforeSwap(agent, testPoolKey, params, _hookData(agent));
         assertEq(sel, VelaHook.beforeSwap.selector);
     }
 
     function test_beforeSwap_positiveAmountSpecified_treated_as_abs() public view {
         // exactOutput swap: amountSpecified > 0
-        IPoolManager.SwapParams memory params = _swapParams(0.1 ether);
+        SwapParams memory params = _swapParams(0.1 ether);
         (bytes4 sel,) = hook.testBeforeSwap(agent, testPoolKey, params, _hookData(agent));
         assertEq(sel, VelaHook.beforeSwap.selector);
     }
@@ -280,9 +261,9 @@ contract VelaHookTest is Test {
     // ─── setAllowedPools ──────────────────────────────────────────────────────
 
     function test_setAllowedPools_operatorCanUpdate() public {
-        bytes32[] memory pools   = new bytes32[](1);
-        bool[]    memory allowed = new bool[](1);
-        pools[0]   = testPoolId;
+        bytes32[] memory pools = new bytes32[](1);
+        bool[] memory allowed = new bool[](1);
+        pools[0] = testPoolId;
         allowed[0] = false; // remove from allowlist
 
         vm.prank(agent);
@@ -292,9 +273,9 @@ contract VelaHookTest is Test {
     }
 
     function test_setAllowedPools_emitsEvent() public {
-        bytes32[] memory pools   = new bytes32[](1);
-        bool[]    memory allowed = new bool[](1);
-        pools[0]   = keccak256("newpool");
+        bytes32[] memory pools = new bytes32[](1);
+        bool[] memory allowed = new bool[](1);
+        pools[0] = keccak256("newpool");
         allowed[0] = true;
 
         vm.expectEmit(true, true, false, true);
@@ -304,9 +285,9 @@ contract VelaHookTest is Test {
     }
 
     function test_setAllowedPools_revert_notOperator() public {
-        bytes32[] memory pools   = new bytes32[](1);
-        bool[]    memory allowed = new bool[](1);
-        pools[0]   = testPoolId;
+        bytes32[] memory pools = new bytes32[](1);
+        bool[] memory allowed = new bool[](1);
+        pools[0] = testPoolId;
         allowed[0] = false;
 
         vm.prank(stranger);
@@ -315,8 +296,8 @@ contract VelaHookTest is Test {
     }
 
     function test_setAllowedPools_revert_lengthMismatch() public {
-        bytes32[] memory pools   = new bytes32[](2);
-        bool[]    memory allowed = new bool[](1);
+        bytes32[] memory pools = new bytes32[](2);
+        bool[] memory allowed = new bool[](1);
 
         vm.prank(agent);
         vm.expectRevert("VelaHook: length mismatch");
@@ -324,17 +305,17 @@ contract VelaHookTest is Test {
     }
 
     function test_setAllowedPools_multiplePools() public {
-        bytes32[] memory pools   = new bytes32[](3);
-        bool[]    memory allowed = new bool[](3);
-        for (uint i = 0; i < 3; i++) {
-            pools[i]   = keccak256(abi.encode("pool", i));
+        bytes32[] memory pools = new bytes32[](3);
+        bool[] memory allowed = new bool[](3);
+        for (uint256 i = 0; i < 3; i++) {
+            pools[i] = keccak256(abi.encode("pool", i));
             allowed[i] = true;
         }
 
         vm.prank(agent);
         hook.setAllowedPools(agent, pools, allowed);
 
-        for (uint i = 0; i < 3; i++) {
+        for (uint256 i = 0; i < 3; i++) {
             assertTrue(hook.isPoolAllowed(agent, pools[i]));
         }
     }
@@ -359,7 +340,7 @@ contract VelaHookTest is Test {
 
     function test_getPoolId_matchesLibrary() public view {
         bytes32 expected = bytes32(PoolId.unwrap(testPoolKey.toId()));
-        bytes32 result   = hook.getPoolId(testPoolKey);
+        bytes32 result = hook.getPoolId(testPoolKey);
         assertEq(result, expected);
     }
 
@@ -375,7 +356,7 @@ contract VelaHookTest is Test {
 
     function testFuzz_sqrtPriceToUsdc_neverOverflows(uint160 sqrtPrice, uint128 amount) public view {
         vm.assume(sqrtPrice > 0 && amount > 0);
-        // Should never revert — just return a value
+        // Should never revert - just return a value
         uint256 val = hook.exposedSqrtPriceToUsdc(sqrtPrice, uint256(amount));
         assertGe(val, 0);
     }

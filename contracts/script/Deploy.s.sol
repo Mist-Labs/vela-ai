@@ -2,11 +2,11 @@
 pragma solidity ^0.8.24;
 
 import {Script, console2} from "forge-std/Script.sol";
-import {PolicyRegistry}   from "../src/PolicyRegistry.sol";
-import {VelaVault}        from "../src/VelaVault.sol";
+import {PolicyRegistry} from "../src/PolicyRegistry.sol";
+import {VelaVault} from "../src/VelaVault.sol";
 import {SettlementContract} from "../src/SettlementContract.sol";
-import {SlashingModule}   from "../src/SlashingModule.sol";
-import {IERC20}           from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SlashingModule} from "../src/SlashingModule.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @notice Deploys the full Vela contract suite to Base Sepolia and prints
 ///         all addresses for export to .env.
@@ -23,7 +23,6 @@ import {IERC20}           from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 /// After running, copy the printed addresses into your .env file.
 /// Then deploy VelaHook separately using HookMiner.s.sol.
 contract Deploy is Script {
-
     // ── Config ────────────────────────────────────────────────────────────────
 
     // Base Sepolia USDC (Circle's testnet deployment)
@@ -33,12 +32,12 @@ contract Deploy is Script {
 
     function run() external {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
-        address deployer    = vm.addr(deployerKey);
+        address deployer = vm.addr(deployerKey);
 
-        address treasury    = vm.envOr("TREASURY_ADDRESS", deployer);
-        address vaultAsset  = vm.envOr("VAULT_ASSET_ADDRESS", USDC_BASE_SEPOLIA);
-        address agentAddr   = vm.envOr("AGENT_ADDRESS", deployer);
-        address enclaveKey  = vm.envOr("REGISTERED_ENCLAVE_KEY", address(0));
+        address treasury = vm.envOr("TREASURY_ADDRESS", deployer);
+        address vaultAsset = vm.envOr("VAULT_ASSET_ADDRESS", USDC_BASE_SEPOLIA);
+        address agentAddr = vm.envOr("AGENT_ADDRESS", deployer);
+        address enclaveKey = vm.envOr("REGISTERED_ENCLAVE_KEY", address(0));
 
         console2.log("=== Vela Deploy ===");
         console2.log("Deployer:     ", deployer);
@@ -55,11 +54,7 @@ contract Deploy is Script {
         console2.log("PolicyRegistry deployed:", address(policyRegistry));
 
         // 2. SlashingModule
-        SlashingModule slashingModule = new SlashingModule(
-            address(policyRegistry),
-            treasury,
-            deployer
-        );
+        SlashingModule slashingModule = new SlashingModule(address(policyRegistry), treasury, deployer);
         console2.log("SlashingModule deployed:", address(slashingModule));
 
         // 3. SettlementContract
@@ -67,12 +62,8 @@ contract Deploy is Script {
         console2.log("SettlementContract deployed:", address(settlementContract));
 
         // 4. VelaVault (single-vault MVP)
-        VelaVault velaVault = new VelaVault(
-            IERC20(vaultAsset),
-            agentAddr,
-            address(policyRegistry),
-            address(settlementContract)
-        );
+        VelaVault velaVault =
+            new VelaVault(IERC20(vaultAsset), agentAddr, address(policyRegistry), address(settlementContract));
         console2.log("VelaVault deployed:", address(velaVault));
 
         // 5. Wire contracts

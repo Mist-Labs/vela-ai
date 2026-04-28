@@ -17,10 +17,12 @@ contract PolicyRegistry {
 
     struct PolicyCommitment {
         address owner;
+        address operator;
         bytes32 policyRoot;
         string policyURI;
         Tier tier;
         uint256 bond;
+        uint256 bondAmount;
         uint256 maxValuePerTxUsdc;
         uint256 totalDecisions;
         uint256 compliantDecisions;
@@ -39,6 +41,7 @@ contract PolicyRegistry {
     mapping(uint256 tier => TierConfig config) private tierConfigs;
     mapping(address recorder => bool authorized) public decisionRecorders;
     mapping(address breaker => bool authorized) public circuitBreakers;
+    mapping(address module => bool authorized) public bondSeizers;
 
     event AgentRegistered(
         address indexed agent,
@@ -53,26 +56,33 @@ contract PolicyRegistry {
     event CircuitBreakerTriggered(address indexed agent, address indexed caller);
     event DecisionRecorderSet(address indexed recorder, bool authorized);
     event CircuitBreakerSet(address indexed breaker, bool authorized);
+    event BondSeizerSet(address indexed seizer, bool authorized);
+    event AgentResumed(address indexed agent, address indexed caller);
+    event BondSeized(address indexed agent, address indexed recipient, uint256 amount);
 
     error NotOwner();
     error NotDecisionRecorder();
     error NotCircuitBreaker();
+    error NotBondSeizer();
     error InvalidPolicyRoot();
     error TierDisabled();
     error IncorrectBond(uint256 expected, uint256 actual);
     error AgentNotRegistered(address agent);
     error AgentAlreadyRegistered(address agent);
     error AgentInactive(address agent);
+    error AgentAlreadyActive(address agent);
+    error TransferFailed(address recipient, uint256 amount);
 
     modifier onlyOwner() {
         if (msg.sender != owner) revert NotOwner();
         _;
     }
 
-    constructor() {
-        owner = msg.sender;
-        decisionRecorders[msg.sender] = true;
-        circuitBreakers[msg.sender] = true;
+    constructor(address initialOwner) {
+        if (initialOwner == address(0)) revert NotOwner();
+        owner = initialOwner;
+        decisionRecorders[initialOwner] = true;
+        circuitBreakers[initialOwner] = true;
 
         tierConfigs[uint256(Tier.MICRO)] = TierConfig({bond: 0.05 ether, maxValuePerTxUsdc: 1_000, enabled: true});
         tierConfigs[uint256(Tier.STANDARD)] = TierConfig({bond: 0.2 ether, maxValuePerTxUsdc: 10_000, enabled: true});
@@ -95,10 +105,12 @@ contract PolicyRegistry {
 
         policies[msg.sender] = PolicyCommitment({
             owner: msg.sender,
+            operator: msg.sender,
             policyRoot: policyRoot,
             policyURI: policyURI,
             tier: Tier(tier),
             bond: msg.value,
+            bondAmount: msg.value,
             maxValuePerTxUsdc: config.maxValuePerTxUsdc,
             totalDecisions: 0,
             compliantDecisions: 0,
@@ -124,7 +136,26 @@ contract PolicyRegistry {
         emit CircuitBreakerTriggered(agent, msg.sender);
     }
 
+    function resumeAgent(address agent) external {
+        PolicyCommitment storage policy = _requirePolicy(agent);
+        if (msg.sender != policy.owner) revert NotOwner();
+        if (policy.active && !policy.circuitBreaker) revert AgentAlreadyActive(agent);
+
+        policy.active = true;
+        policy.circuitBreaker = false;
+
+        emit AgentResumed(agent, msg.sender);
+    }
+
     function recordDecision(address agent, bool compliant) external {
+        _recordOutcome(agent, compliant);
+    }
+
+    function recordAttestation(address agent, bool valid) external {
+        _recordOutcome(agent, valid);
+    }
+
+    function _recordOutcome(address agent, bool compliant) private {
         if (!decisionRecorders[msg.sender]) revert NotDecisionRecorder();
 
         PolicyCommitment storage policy = _requirePolicy(agent);
@@ -146,6 +177,40 @@ contract PolicyRegistry {
         emit DecisionRecorded(agent, compliant, policy.totalDecisions, policy.complianceScore);
     }
 
+    function seizeBond(address agent) external returns (uint256 amount) {
+        if (!bondSeizers[msg.sender]) revert NotBondSeizer();
+
+        PolicyCommitment storage policy = _requirePolicy(agent);
+        amount = policy.bondAmount;
+        if (amount == 0) return 0;
+
+        policy.bond = 0;
+        policy.bondAmount = 0;
+        policy.active = false;
+        policy.circuitBreaker = true;
+
+        (bool ok,) = msg.sender.call{value: amount}("");
+        if (!ok) revert TransferFailed(msg.sender, amount);
+
+        emit BondSeized(agent, msg.sender, amount);
+        emit CircuitBreakerTriggered(agent, msg.sender);
+    }
+
+    function setContracts(address attestationContract, address bondSeizer) external onlyOwner {
+        if (attestationContract != address(0)) {
+            decisionRecorders[attestationContract] = true;
+            circuitBreakers[attestationContract] = true;
+            emit DecisionRecorderSet(attestationContract, true);
+            emit CircuitBreakerSet(attestationContract, true);
+        }
+        if (bondSeizer != address(0)) {
+            bondSeizers[bondSeizer] = true;
+            circuitBreakers[bondSeizer] = true;
+            emit BondSeizerSet(bondSeizer, true);
+            emit CircuitBreakerSet(bondSeizer, true);
+        }
+    }
+
     function setDecisionRecorder(address recorder, bool authorized) external onlyOwner {
         decisionRecorders[recorder] = authorized;
         emit DecisionRecorderSet(recorder, authorized);
@@ -156,9 +221,19 @@ contract PolicyRegistry {
         emit CircuitBreakerSet(breaker, authorized);
     }
 
+    function setBondSeizer(address seizer, bool authorized) external onlyOwner {
+        bondSeizers[seizer] = authorized;
+        emit BondSeizerSet(seizer, authorized);
+    }
+
     function isActive(address agent) external view returns (bool) {
         PolicyCommitment storage policy = policies[agent];
         return policy.owner != address(0) && policy.active && !policy.circuitBreaker;
+    }
+
+    function circuitBreakerTriggered(address agent) external view returns (bool) {
+        PolicyCommitment storage policy = policies[agent];
+        return policy.owner != address(0) && policy.circuitBreaker;
     }
 
     function getPolicy(address agent) external view returns (PolicyCommitment memory) {

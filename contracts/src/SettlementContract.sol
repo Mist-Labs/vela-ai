@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Ownable}         from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {ECDSA}           from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {PolicyRegistry}  from "./PolicyRegistry.sol";
-import {VelaVault}       from "./VelaVault.sol";
+import {PolicyRegistry} from "./PolicyRegistry.sol";
+import {VelaVault} from "./VelaVault.sol";
 
 /// @title  SettlementContract
 /// @notice Settles Vela agent decisions using 0G Sealed Inference TEE attestation.
@@ -20,14 +20,14 @@ import {VelaVault}       from "./VelaVault.sol";
 ///         3. settle() recovers the signer from (contentHash, sig) and confirms
 ///            it matches a registered enclave key.
 ///         4. contentHash is verified against the committed decisionHash stored
-///            in VelaVault — proving the settled response IS the committed record.
+///            in VelaVault - proving the settled response IS the committed record.
 ///         5. On success: VelaVault.markAttested(), PolicyRegistry.recordDecision().
 ///
 ///         Production upgrade path: replace registered key check with on-chain
 ///         Intel DCAP verification (quote verification library) to remove the
 ///         trusted-registration step entirely.
 contract SettlementContract is Ownable, ReentrancyGuard {
-    using ECDSA           for bytes32;
+    using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
     // ─── Errors ───────────────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ contract SettlementContract is Ownable, ReentrancyGuard {
     mapping(address => mapping(uint256 => bool)) public settled;
 
     PolicyRegistry public registry;
-    VelaVault      public vault; // single-vault MVP; multi-vault in production
+    VelaVault public vault; // single-vault MVP; multi-vault in production
 
     bool private _contractsSet;
 
@@ -64,20 +64,11 @@ contract SettlementContract is Ownable, ReentrancyGuard {
     event EnclaveKeyRegistered(address indexed key, address indexed registeredBy);
     event EnclaveKeyRevoked(address indexed key, address indexed revokedBy);
     event DecisionSettled(
-        address indexed vaultAddr,
-        uint256 indexed decisionId,
-        address indexed enclaveKey,
-        bytes32         contentHash
+        address indexed vaultAddr, uint256 indexed decisionId, address indexed enclaveKey, bytes32 contentHash
     );
-    event TimeoutChallengeAccepted(
-        address indexed vaultAddr,
-        uint256 indexed decisionId
-    );
+    event TimeoutChallengeAccepted(address indexed vaultAddr, uint256 indexed decisionId);
     event TamperChallengeAccepted(
-        address indexed vaultAddr,
-        uint256 indexed decisionId,
-        bytes32 committedHash,
-        bytes32 providedHash
+        address indexed vaultAddr, uint256 indexed decisionId, bytes32 committedHash, bytes32 providedHash
     );
 
     // ─── Constructor ──────────────────────────────────────────────────────────
@@ -90,9 +81,9 @@ contract SettlementContract is Ownable, ReentrancyGuard {
     function setContracts(address registry_, address vault_) external onlyOwner {
         if (_contractsSet) revert ContractsAlreadySet();
         if (registry_ == address(0) || vault_ == address(0)) revert ZeroAddress();
-        registry       = PolicyRegistry(registry_);
-        vault          = VelaVault(vault_);
-        _contractsSet  = true;
+        registry = PolicyRegistry(registry_);
+        vault = VelaVault(vault_);
+        _contractsSet = true;
     }
 
     /// @notice Register a 0G Sealed Inference enclave public key.
@@ -122,16 +113,14 @@ contract SettlementContract is Ownable, ReentrancyGuard {
     ///                      Must match the decisionHash committed in VelaVault.
     /// @param  sig          ECDSA signature from the 0G enclave key over contentHash.
     ///                      Enclave signs: keccak256("\x19Ethereum Signed Message:\n32" || contentHash)
-    function settle(
-        address vaultAddr,
-        uint256 decisionId,
-        bytes32 contentHash,
-        bytes calldata sig
-    ) external nonReentrant {
+    function settle(address vaultAddr, uint256 decisionId, bytes32 contentHash, bytes calldata sig)
+        external
+        nonReentrant
+    {
         // ── Input validation ─────────────────────────────────────────────────
-        if (vaultAddr   == address(0)) revert ZeroAddress();
+        if (vaultAddr == address(0)) revert ZeroAddress();
         if (contentHash == bytes32(0)) revert ZeroHash();
-        if (sig.length  != 65)         revert InvalidSignatureLength();
+        if (sig.length != 65) revert InvalidSignatureLength();
 
         // ── Fetch committed decision ─────────────────────────────────────────
         VelaVault vaultContract = VelaVault(vaultAddr);
@@ -153,7 +142,7 @@ contract SettlementContract is Ownable, ReentrancyGuard {
         // The 0G enclave signs the Ethereum prefixed hash so that standard
         // tools (ethers.js, cast) can produce and verify signatures.
         bytes32 ethSignedHash = contentHash.toEthSignedMessageHash();
-        address recovered     = ethSignedHash.recover(sig);
+        address recovered = ethSignedHash.recover(sig);
 
         if (!registeredEnclaveKeys[recovered]) {
             revert UnregisteredEnclave(recovered);
@@ -175,10 +164,7 @@ contract SettlementContract is Ownable, ReentrancyGuard {
     ///         Anyone can call this. Triggers circuit breaker on the agent.
     /// @param  vaultAddr   Address of the VelaVault.
     /// @param  decisionId  Decision index.
-    function challengeTimeout(address vaultAddr, uint256 decisionId)
-        external
-        nonReentrant
-    {
+    function challengeTimeout(address vaultAddr, uint256 decisionId) external nonReentrant {
         VelaVault vaultContract = VelaVault(vaultAddr);
         VelaVault.DecisionRecord memory d = vaultContract.getDecision(decisionId);
 
@@ -188,11 +174,11 @@ contract SettlementContract is Ownable, ReentrancyGuard {
 
         settled[vaultAddr][decisionId] = true;
 
-        vaultContract.markChallenged(decisionId);
-        registry.triggerCircuitBreaker(vaultContract.agent());
-        registry.recordDecision(vaultContract.agent(), false);
-
         emit TimeoutChallengeAccepted(vaultAddr, decisionId);
+
+        vaultContract.markChallenged(decisionId);
+        registry.recordDecision(vaultContract.agent(), false);
+        registry.triggerCircuitBreaker(vaultContract.agent());
     }
 
     /// @notice Submit a tamper challenge: the provided contentHash does not match
@@ -203,11 +189,7 @@ contract SettlementContract is Ownable, ReentrancyGuard {
     /// @param  decisionId     Decision index.
     /// @param  fetchedHash    keccak256 of the actual 0G DA record (what's in storage).
     ///                        Must differ from committed decisionHash to succeed.
-    function challengeTamperedRecord(
-        address vaultAddr,
-        uint256 decisionId,
-        bytes32 fetchedHash
-    ) external nonReentrant {
+    function challengeTamperedRecord(address vaultAddr, uint256 decisionId, bytes32 fetchedHash) external nonReentrant {
         VelaVault vaultContract = VelaVault(vaultAddr);
         VelaVault.DecisionRecord memory d = vaultContract.getDecision(decisionId);
 
@@ -220,11 +202,11 @@ contract SettlementContract is Ownable, ReentrancyGuard {
 
         settled[vaultAddr][decisionId] = true;
 
-        vaultContract.markChallenged(decisionId);
-        registry.triggerCircuitBreaker(vaultContract.agent());
-        registry.recordDecision(vaultContract.agent(), false);
-
         emit TamperChallengeAccepted(vaultAddr, decisionId, d.decisionHash, fetchedHash);
+
+        vaultContract.markChallenged(decisionId);
+        registry.recordDecision(vaultContract.agent(), false);
+        registry.triggerCircuitBreaker(vaultContract.agent());
     }
 
     // ─── Views ────────────────────────────────────────────────────────────────

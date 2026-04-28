@@ -1,39 +1,44 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test, console2}  from "forge-std/Test.sol";
-import {ERC20}           from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {VelaVault}       from "../src/VelaVault.sol";
-import {PolicyRegistry}  from "../src/PolicyRegistry.sol";
+import {Test, console2} from "forge-std/Test.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {VelaVault} from "../src/VelaVault.sol";
+import {PolicyRegistry} from "../src/PolicyRegistry.sol";
 
 /// @dev Minimal ERC-20 for testing
 contract MockERC20 is ERC20 {
     constructor() ERC20("Mock USDC", "mUSDC") {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
-    function decimals() public pure override returns (uint8) { return 6; }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
 }
 
 contract VelaVaultTest is Test {
-
-    MockERC20      public asset;
+    MockERC20 public asset;
     PolicyRegistry public registry;
-    VelaVault      public vault;
+    VelaVault public vault;
 
-    address public owner      = makeAddr("owner");
-    address public agentAddr  = makeAddr("agent");
+    address public owner = makeAddr("owner");
+    address public agentAddr = makeAddr("agent");
     address public settlement = makeAddr("settlement");
-    address public slashing   = makeAddr("slashing");
-    address public user1      = makeAddr("user1");
-    address public stranger   = makeAddr("stranger");
+    address public slashing = makeAddr("slashing");
+    address public user1 = makeAddr("user1");
+    address public stranger = makeAddr("stranger");
 
-    bytes32 constant POLICY_ROOT    = keccak256("policy");
-    string  constant POLICY_URI     = "0g://abc";
-    bytes32 constant DECISION_HASH  = keccak256("decision-0");
-    string  constant EXPLANATION    = "Swap 1000 USDC for WETH — yield opportunity detected";
-    string  constant EVIDENCE_CID   = "0g://evidence-cid-abc123";
+    bytes32 constant POLICY_ROOT = keccak256("policy");
+    string constant POLICY_URI = "0g://abc";
+    bytes32 constant DECISION_HASH = keccak256("decision-0");
+    string constant EXPLANATION = "Swap 1000 USDC for WETH - yield opportunity detected";
+    string constant EVIDENCE_CID = "0g://evidence-cid-abc123";
 
     function setUp() public {
-        asset    = new MockERC20();
+        asset = new MockERC20();
         registry = new PolicyRegistry(owner);
 
         vault = new VelaVault(asset, agentAddr, address(registry), settlement);
@@ -63,9 +68,9 @@ contract VelaVaultTest is Test {
 
         VelaVault.DecisionRecord memory d = vault.getDecision(0);
         assertEq(d.decisionHash, DECISION_HASH);
-        assertEq(d.explanation,  EXPLANATION);
-        assertEq(d.evidenceCID,  EVIDENCE_CID);
-        assertEq(d.timestamp,    block.timestamp);
+        assertEq(d.explanation, EXPLANATION);
+        assertEq(d.evidenceCID, EVIDENCE_CID);
+        assertEq(d.timestamp, block.timestamp);
         assertEq(d.challengeDeadline, block.timestamp + 24 hours);
         assertEq(uint8(d.status), uint8(VelaVault.AttestationStatus.Pending));
         assertEq(d.attestationHash, bytes32(0));
@@ -86,22 +91,14 @@ contract VelaVaultTest is Test {
 
     function test_commitDecision_emitsEvent() public {
         vm.expectEmit(true, false, false, true);
-        emit VelaVault.DecisionCommitted(
-            0,
-            DECISION_HASH,
-            EXPLANATION,
-            EVIDENCE_CID,
-            block.timestamp + 24 hours
-        );
+        emit VelaVault.DecisionCommitted(0, DECISION_HASH, EXPLANATION, EVIDENCE_CID, block.timestamp + 24 hours);
         vm.prank(agentAddr);
         vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
     }
 
     function test_commitDecision_revert_notAgent() public {
         vm.prank(stranger);
-        vm.expectRevert(
-            abi.encodeWithSelector(VelaVault.OnlyAgent.selector, stranger)
-        );
+        vm.expectRevert(abi.encodeWithSelector(VelaVault.OnlyAgent.selector, stranger));
         vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
     }
 
@@ -110,9 +107,7 @@ contract VelaVaultTest is Test {
         registry.triggerCircuitBreaker(agentAddr);
 
         vm.prank(agentAddr);
-        vm.expectRevert(
-            abi.encodeWithSelector(VelaVault.CircuitBreakerActive.selector, agentAddr)
-        );
+        vm.expectRevert(abi.encodeWithSelector(VelaVault.CircuitBreakerActive.selector, agentAddr));
         vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
     }
 
@@ -159,9 +154,7 @@ contract VelaVaultTest is Test {
         vault.commitDecision(DECISION_HASH, EXPLANATION, EVIDENCE_CID);
 
         vm.prank(stranger);
-        vm.expectRevert(
-            abi.encodeWithSelector(VelaVault.OnlySettlement.selector, stranger)
-        );
+        vm.expectRevert(abi.encodeWithSelector(VelaVault.OnlySettlement.selector, stranger));
         vault.markAttested(0, keccak256("proof"));
     }
 
@@ -203,10 +196,7 @@ contract VelaVaultTest is Test {
         vm.prank(settlement);
         vault.markChallenged(0);
 
-        assertEq(
-            uint8(vault.getDecision(0).status),
-            uint8(VelaVault.AttestationStatus.Challenged)
-        );
+        assertEq(uint8(vault.getDecision(0).status), uint8(VelaVault.AttestationStatus.Challenged));
     }
 
     function test_markChallenged_revert_alreadyAttested() public {
@@ -253,9 +243,7 @@ contract VelaVaultTest is Test {
         registry.triggerCircuitBreaker(agentAddr);
 
         vm.prank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(VelaVault.CircuitBreakerActive.selector, agentAddr)
-        );
+        vm.expectRevert(abi.encodeWithSelector(VelaVault.CircuitBreakerActive.selector, agentAddr));
         vault.deposit(1_000e6, user1);
     }
 
@@ -267,11 +255,11 @@ contract VelaVaultTest is Test {
         registry.triggerCircuitBreaker(agentAddr);
 
         address user2 = makeAddr("user2");
-        vm.prank(user1);
-        vm.expectRevert(
-            abi.encodeWithSelector(VelaVault.CircuitBreakerActive.selector, agentAddr)
-        );
-        vault.transfer(user2, vault.balanceOf(user1));
+        uint256 shares = vault.balanceOf(user1);
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(VelaVault.CircuitBreakerActive.selector, agentAddr));
+        vault.transfer(user2, shares);
+        vm.stopPrank();
     }
 
     function test_circuitBreaker_allowsWithdrawal() public {
@@ -281,7 +269,7 @@ contract VelaVaultTest is Test {
         vm.prank(agentAddr);
         registry.triggerCircuitBreaker(agentAddr);
 
-        // Withdrawal (burn) must succeed — users must always be able to exit
+        // Withdrawal (burn) must succeed - users must always be able to exit
         uint256 shares = vault.balanceOf(user1);
         vm.prank(user1);
         uint256 withdrawn = vault.redeem(shares, user1, user1);

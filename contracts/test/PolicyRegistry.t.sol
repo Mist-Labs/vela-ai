@@ -28,7 +28,7 @@ contract PolicyRegistryTest {
     uint256 private constant MICRO_BOND = 0.05 ether;
 
     function setUp() public {
-        registry = new PolicyRegistry();
+        registry = new PolicyRegistry(address(this));
     }
 
     function testRegisterAgentStoresPolicy() public {

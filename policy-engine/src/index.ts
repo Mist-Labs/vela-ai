@@ -13,11 +13,11 @@ import type { CompiledPolicy } from './types.js';
 /**
  * Full pipeline: raw intent string → CompiledPolicy ready for on-chain deployment.
  *
- * 1. NLP compilation   — Claude API (one call, setup only)
+ * 1. NLP compilation   — Kimi API (one call, setup only)
  * 2. Conflict detection — pure, deterministic
  * 3. Merkle tree build  — deterministic, OZ-compatible
  *
- * Throws if the Claude API call fails or if the resulting constraints are
+ * Throws if the Kimi API call fails or if the resulting constraints are
  * structurally invalid (e.g. no pools, invalid hour window).
  */
 export async function compilePolicy(rawIntent: string): Promise<CompiledPolicy> {

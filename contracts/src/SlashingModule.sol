@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Ownable}         from "@openzeppelin/contracts/access/Ownable.sol";
-import {PolicyRegistry}  from "./PolicyRegistry.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {PolicyRegistry} from "./PolicyRegistry.sol";
 
 /// @title  SlashingModule
 /// @notice Permissionless bond slashing for Vela policy violations.
@@ -14,7 +14,6 @@ import {PolicyRegistry}  from "./PolicyRegistry.sol";
 /// @dev    Proof format (MVP): abi.encode(bytes32 violatingDecisionHash, bytes32 policyRoot)
 ///         Production upgrade: replace _verifyViolation with SP1 Groth16 proof verification.
 contract SlashingModule is ReentrancyGuard, Ownable {
-
     // ─── Errors ───────────────────────────────────────────────────────────────
 
     error AgentNotActive(address agent);
@@ -26,14 +25,14 @@ contract SlashingModule is ReentrancyGuard, Ownable {
 
     // ─── Constants ────────────────────────────────────────────────────────────
 
-    uint256 public constant CHALLENGER_BPS  = 8_000; // 80%
-    uint256 public constant TREASURY_BPS    = 2_000; // 20%
+    uint256 public constant CHALLENGER_BPS = 8_000; // 80%
+    uint256 public constant TREASURY_BPS = 2_000; // 20%
     uint256 public constant BPS_DENOMINATOR = 10_000;
 
     // ─── State ────────────────────────────────────────────────────────────────
 
     PolicyRegistry public immutable registry;
-    address        public           treasury;
+    address public treasury;
 
     // Track slashed agents to prevent double-slash attempts on stale state
     mapping(address => bool) public slashed;
@@ -43,18 +42,16 @@ contract SlashingModule is ReentrancyGuard, Ownable {
     event Slashed(
         address indexed agent,
         address indexed challenger,
-        uint256         totalBond,
-        uint256         challengerReward,
-        uint256         treasuryCut,
-        bytes32         violatingDecisionHash
+        uint256 totalBond,
+        uint256 challengerReward,
+        uint256 treasuryCut,
+        bytes32 violatingDecisionHash
     );
     event TreasuryUpdated(address indexed oldTreasury, address indexed newTreasury);
 
     // ─── Constructor ──────────────────────────────────────────────────────────
 
-    constructor(address registry_, address treasury_, address initialOwner)
-        Ownable(initialOwner)
-    {
+    constructor(address registry_, address treasury_, address initialOwner) Ownable(initialOwner) {
         if (registry_ == address(0) || treasury_ == address(0)) revert ZeroAddress();
         registry = PolicyRegistry(registry_);
         treasury = treasury_;
@@ -69,10 +66,7 @@ contract SlashingModule is ReentrancyGuard, Ownable {
     /// @param  violationProof ABI-encoded violation evidence.
     ///                        MVP: abi.encode(bytes32 decisionHash, bytes32 policyRoot)
     ///                        Production: SP1 Groth16 proof bytes.
-    function slash(address agent, bytes calldata violationProof)
-        external
-        nonReentrant
-    {
+    function slash(address agent, bytes calldata violationProof) external nonReentrant {
         // ── Pre-conditions ───────────────────────────────────────────────────
         if (slashed[agent]) revert AlreadySlashed(agent);
 
@@ -92,19 +86,12 @@ contract SlashingModule is ReentrancyGuard, Ownable {
 
         // ── Distribute ───────────────────────────────────────────────────────
         uint256 challengerReward = (totalBond * CHALLENGER_BPS) / BPS_DENOMINATOR;
-        uint256 treasuryCut      = totalBond - challengerReward; // avoids rounding dust going to challenger
+        uint256 treasuryCut = totalBond - challengerReward; // avoids rounding dust going to challenger
 
         _safeTransferETH(msg.sender, challengerReward);
-        _safeTransferETH(treasury,   treasuryCut);
+        _safeTransferETH(treasury, treasuryCut);
 
-        emit Slashed(
-            agent,
-            msg.sender,
-            totalBond,
-            challengerReward,
-            treasuryCut,
-            violatingHash
-        );
+        emit Slashed(agent, msg.sender, totalBond, challengerReward, treasuryCut, violatingHash);
     }
 
     // ─── Admin ────────────────────────────────────────────────────────────────
@@ -141,7 +128,7 @@ contract SlashingModule is ReentrancyGuard, Ownable {
 
         assembly {
             proofDecisionHash := calldataload(proof.offset)
-            proofPolicyRoot   := calldataload(add(proof.offset, 32))
+            proofPolicyRoot := calldataload(add(proof.offset, 32))
         }
 
         // The proof must reference the agent's exact committed policy root
