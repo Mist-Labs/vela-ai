@@ -21,6 +21,8 @@ contract PolicyRegistry {
         string policyURI;
         Tier tier;
         uint256 maxValuePerTxUsdc;
+        uint8 activeHoursStartUtc;
+        uint8 activeHoursEndUtc;
         uint256 totalDecisions;
         uint256 compliantDecisions;
         uint256 complianceScore;
@@ -52,11 +54,13 @@ contract PolicyRegistry {
     event DecisionRecorderSet(address indexed recorder, bool authorized);
     event CircuitBreakerSet(address indexed breaker, bool authorized);
     event AgentResumed(address indexed agent, address indexed caller);
+    event TradingHoursUpdated(address indexed agent, uint8 activeHoursStartUtc, uint8 activeHoursEndUtc);
 
     error NotOwner();
     error NotDecisionRecorder();
     error NotCircuitBreaker();
     error InvalidPolicyRoot();
+    error InvalidActiveHours(uint8 activeHoursStartUtc, uint8 activeHoursEndUtc);
     error TierDisabled();
     error AgentNotRegistered(address agent);
     error AgentAlreadyRegistered(address agent);
@@ -81,6 +85,26 @@ contract PolicyRegistry {
     }
 
     function registerAgent(bytes32 policyRoot, string calldata policyURI, uint256 tier) external {
+        _registerAgent(policyRoot, policyURI, tier, 0, 24);
+    }
+
+    function registerAgentWithPolicy(
+        bytes32 policyRoot,
+        string calldata policyURI,
+        uint256 tier,
+        uint8 activeHoursStartUtc,
+        uint8 activeHoursEndUtc
+    ) external {
+        _registerAgent(policyRoot, policyURI, tier, activeHoursStartUtc, activeHoursEndUtc);
+    }
+
+    function _registerAgent(
+        bytes32 policyRoot,
+        string calldata policyURI,
+        uint256 tier,
+        uint8 activeHoursStartUtc,
+        uint8 activeHoursEndUtc
+    ) private {
         if (policyRoot == bytes32(0)) revert InvalidPolicyRoot();
         if (policies[msg.sender].owner != address(0)) {
             revert AgentAlreadyRegistered(msg.sender);
@@ -88,6 +112,7 @@ contract PolicyRegistry {
 
         TierConfig memory config = tierConfigs[tier];
         if (!config.enabled) revert TierDisabled();
+        _validateActiveHours(activeHoursStartUtc, activeHoursEndUtc);
 
         policies[msg.sender] = PolicyCommitment({
             owner: msg.sender,
@@ -96,6 +121,8 @@ contract PolicyRegistry {
             policyURI: policyURI,
             tier: Tier(tier),
             maxValuePerTxUsdc: config.maxValuePerTxUsdc,
+            activeHoursStartUtc: activeHoursStartUtc,
+            activeHoursEndUtc: activeHoursEndUtc,
             totalDecisions: 0,
             compliantDecisions: 0,
             complianceScore: MAX_COMPLIANCE_SCORE,
@@ -127,6 +154,17 @@ contract PolicyRegistry {
         policy.circuitBreaker = false;
 
         emit AgentResumed(agent, msg.sender);
+    }
+
+    function setTradingHours(address agent, uint8 activeHoursStartUtc, uint8 activeHoursEndUtc) external {
+        PolicyCommitment storage policy = _requirePolicy(agent);
+        if (msg.sender != policy.owner) revert NotOwner();
+        _validateActiveHours(activeHoursStartUtc, activeHoursEndUtc);
+
+        policy.activeHoursStartUtc = activeHoursStartUtc;
+        policy.activeHoursEndUtc = activeHoursEndUtc;
+
+        emit TradingHoursUpdated(agent, activeHoursStartUtc, activeHoursEndUtc);
     }
 
     function recordDecision(address agent, bool compliant) external {
@@ -188,6 +226,12 @@ contract PolicyRegistry {
         return policy.owner != address(0) && policy.circuitBreaker;
     }
 
+    function isWithinTradingHours(address agent) external view returns (bool) {
+        PolicyCommitment storage policy = _requirePolicy(agent);
+        uint8 currentHourUtc = _currentUtcHour();
+        return currentHourUtc >= policy.activeHoursStartUtc && currentHourUtc < policy.activeHoursEndUtc;
+    }
+
     function getPolicy(address agent) external view returns (PolicyCommitment memory) {
         if (policies[agent].owner == address(0)) {
             revert AgentNotRegistered(agent);
@@ -203,5 +247,18 @@ contract PolicyRegistry {
         PolicyCommitment storage policy = policies[agent];
         if (policy.owner == address(0)) revert AgentNotRegistered(agent);
         return policy;
+    }
+
+    function _validateActiveHours(uint8 activeHoursStartUtc, uint8 activeHoursEndUtc) private pure {
+        if (activeHoursStartUtc >= 24 || activeHoursEndUtc == 0 || activeHoursEndUtc > 24) {
+            revert InvalidActiveHours(activeHoursStartUtc, activeHoursEndUtc);
+        }
+        if (activeHoursStartUtc >= activeHoursEndUtc) {
+            revert InvalidActiveHours(activeHoursStartUtc, activeHoursEndUtc);
+        }
+    }
+
+    function _currentUtcHour() private view returns (uint8) {
+        return uint8((block.timestamp / 1 hours) % 24);
     }
 }

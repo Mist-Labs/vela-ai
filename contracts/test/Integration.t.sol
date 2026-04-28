@@ -78,7 +78,7 @@ contract IntegrationTest is Test {
         uint256 decisionId = vault.commitDecision(DECISION_HASH, explanation, cid);
         assertEq(decisionId, 0);
 
-        attestation.verifyAndSettle(address(vault), agent, decisionId, DECISION_HASH, _sign(DECISION_HASH));
+        attestation.verifyAndSettle(address(vault), decisionId, DECISION_HASH, _sign(DECISION_HASH));
 
         VelaVault.DecisionRecord memory d = vault.getDecision(decisionId);
         assertEq(uint8(d.status), uint8(VelaVault.AttestationStatus.Attested));
@@ -106,7 +106,7 @@ contract IntegrationTest is Test {
             DECISION_HASH, "Attempting to swap 50000 USDC - exceeds policy limit", "0g://evidence-xyz"
         );
 
-        attestation.reportFailure(address(vault), agent, decisionId, "TEE signature mismatch");
+        attestation.reportFailure(address(vault), decisionId, "TEE signature mismatch");
 
         assertTrue(registry.circuitBreakerTriggered(agent));
         assertFalse(registry.isActive(agent));
@@ -132,7 +132,7 @@ contract IntegrationTest is Test {
         vm.prank(agent);
         uint256 decisionId = vault.commitDecision(DECISION_HASH, "some decision", "0g://cid");
 
-        attestation.reportFailure(address(vault), agent, decisionId, "missing TEE attestation");
+        attestation.reportFailure(address(vault), decisionId, "missing TEE attestation");
 
         assertTrue(registry.circuitBreakerTriggered(agent));
         assertFalse(registry.isActive(agent));
@@ -149,7 +149,7 @@ contract IntegrationTest is Test {
             bytes32 hash = keccak256(abi.encode(i));
             vm.prank(agent);
             uint256 decisionId = vault.commitDecision(hash, "compliant", "0g://cid");
-            attestation.verifyAndSettle(address(vault), agent, decisionId, hash, _sign(hash));
+            attestation.verifyAndSettle(address(vault), decisionId, hash, _sign(hash));
         }
 
         PolicyRegistry.PolicyCommitment memory p = registry.getPolicy(agent);

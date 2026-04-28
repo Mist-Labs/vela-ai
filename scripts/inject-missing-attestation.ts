@@ -19,7 +19,6 @@
 import "dotenv/config";
 import { ethers } from "ethers";
 import { MemData, Indexer } from "@0gfoundation/0g-ts-sdk";
-import * as crypto from "crypto";
 
 // ─────────────────────────────── config ──────────────────────────────────────
 
@@ -42,7 +41,7 @@ if (!VAULT_ADDRESS || !AGENT_ADDRESS || !PRIVATE_KEY) {
 
 const VAULT_ABI = [
   "function commitDecision(bytes32 decisionHash, string calldata explanation, string calldata evidenceCID) external returns (uint256)",
-  "event DecisionCommitted(uint256 indexed decisionId, bytes32 decisionHash, string evidenceCID)",
+  "event DecisionCommitted(uint256 indexed id, bytes32 decisionHash, string explanation, string evidenceCID)",
 ];
 
 // ─────────────────────────────── helpers ─────────────────────────────────────
@@ -73,13 +72,7 @@ function buildDecisionRecord(agentAddress: string): object {
 }
 
 function hashRecord(record: object): string {
-  return (
-    "0x" +
-    crypto
-      .createHash("sha256")
-      .update(JSON.stringify(record))
-      .digest("hex")
-  );
+  return ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(record)));
 }
 
 async function uploadToZeroG(
@@ -144,7 +137,7 @@ async function main() {
     try {
       const parsed = iface.parseLog(log);
       if (parsed?.name === "DecisionCommitted") {
-        decisionId = parsed.args.decisionId;
+        decisionId = parsed.args.id;
       }
     } catch {
       // skip

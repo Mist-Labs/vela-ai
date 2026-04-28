@@ -5,6 +5,7 @@ import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 interface IVelaVault {
+    function agent() external view returns (address);
     function getDecisionHash(uint256 decisionId) external view returns (bytes32);
     function markAttested(uint256 decisionId, bytes32 attestationHash) external;
 }
@@ -93,7 +94,6 @@ contract AttestationContract is Ownable {
      * @notice Verify and settle a TEE-attested decision.
      *
      * @param vault       Address of the VelaVault that committed the decision.
-     * @param agent       Address of the agent that made the decision.
      * @param decisionId  ID returned by VelaVault.commitDecision().
      * @param contentHash keccak256 of the full 0G DA response JSON
      *                    (including tee_attestation). Must match the hash
@@ -106,9 +106,8 @@ contract AttestationContract is Ownable {
      *   - Unregistered enclave signer
      *   - contentHash != committed decisionHash
      */
-    function verifyAndSettle(address vault, address agent, uint256 decisionId, bytes32 contentHash, bytes calldata sig)
-        external
-    {
+    function verifyAndSettle(address vault, uint256 decisionId, bytes32 contentHash, bytes calldata sig) external {
+        if (vault == address(0)) revert ZeroAddress();
         if (settled[vault][decisionId]) {
             revert AlreadySettled(vault, decisionId);
         }
@@ -131,6 +130,7 @@ contract AttestationContract is Ownable {
         settled[vault][decisionId] = true;
 
         IVelaVault(vault).markAttested(decisionId, contentHash);
+        address agent = IVelaVault(vault).agent();
         registry.recordAttestation(agent, true);
 
         emit DecisionSettled(vault, decisionId, signer, contentHash);
@@ -141,14 +141,15 @@ contract AttestationContract is Ownable {
      *         Triggers an immediate circuit break on the agent's vault.
      *
      * @param vault      The affected vault.
-     * @param agent      The agent whose decisions failed attestation.
      * @param decisionId The decision ID that failed.
      * @param reason     Human-readable failure reason for the event log.
      */
-    function reportFailure(address vault, address agent, uint256 decisionId, string calldata reason) external {
+    function reportFailure(address vault, uint256 decisionId, string calldata reason) external {
+        if (vault == address(0)) revert ZeroAddress();
         // In production: restrict to watchtower role via AccessControl.
         // For the hackathon: anyone can report - watchtower is the caller.
         emit AttestationFailure(vault, decisionId, reason);
+        address agent = IVelaVault(vault).agent();
         registry.recordAttestation(agent, false);
         registry.triggerCircuitBreaker(agent);
     }

@@ -44,6 +44,7 @@ contract VelaHook is IHooks {
 
     error AgentNotActive(address agent);
     error CircuitBreakerActive(address agent);
+    error TradingHoursClosed(address agent, uint8 currentHourUtc, uint8 activeHoursStartUtc, uint8 activeHoursEndUtc);
     error ValueExceedsPolicy(uint256 valueUsdc, uint256 maxUsdc);
     error PoolNotAllowed(bytes32 poolId);
     error NoHookData();
@@ -138,6 +139,14 @@ contract VelaHook is IHooks {
         if (registry.circuitBreakerTriggered(agent)) revert CircuitBreakerActive(agent);
         if (!registry.isActive(agent)) revert AgentNotActive(agent);
 
+        PolicyRegistry.PolicyCommitment memory policy = registry.getPolicy(agent);
+
+        // ── Check 2: trade is inside the configured UTC trading window ────────
+        uint8 currentHourUtc = uint8((block.timestamp / 1 hours) % 24);
+        if (currentHourUtc < policy.activeHoursStartUtc || currentHourUtc >= policy.activeHoursEndUtc) {
+            revert TradingHoursClosed(agent, currentHourUtc, policy.activeHoursStartUtc, policy.activeHoursEndUtc);
+        }
+
         // ── Check 3: pool is on the agent's allowlist ─────────────────────────
         bytes32 poolId = bytes32(PoolId.unwrap(key.toId()));
         if (!allowedPools[agent][poolId]) revert PoolNotAllowed(poolId);
@@ -151,7 +160,7 @@ contract VelaHook is IHooks {
 
         uint256 swapValueUsdc = _sqrtPriceToUsdc(sqrtPriceX96, absAmount);
 
-        PolicyRegistry.TierConfig memory cfg = registry.getTierConfig(uint8(registry.getPolicy(agent).tier));
+        PolicyRegistry.TierConfig memory cfg = registry.getTierConfig(uint8(policy.tier));
 
         uint256 maxValueUsdc = cfg.maxValuePerTxUsdc * USDC_DECIMALS_SCALAR;
         if (swapValueUsdc > maxValueUsdc) {

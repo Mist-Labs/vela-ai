@@ -14,7 +14,6 @@
 
 import { Indexer, MemData } from "@0gfoundation/0g-ts-sdk";
 import { ethers } from "ethers";
-import * as crypto from "crypto";
 
 // ─────────────────────────────── types ───────────────────────────────────────
 
@@ -83,8 +82,7 @@ export class ZeroGStorageClient {
 
     // contentHash: keccak256 of the JSON bytes — this is what the enclave
     // signs and what the watchtower verifies on-chain.
-    const contentHash =
-      "0x" + crypto.createHash("sha256").update(json).digest("hex");
+    const contentHash = ethers.keccak256(ethers.toUtf8Bytes(json));
 
     const memData = new MemData(encoded);
 
@@ -135,8 +133,7 @@ export class ZeroGStorageClient {
     // Read back and parse.
     const { readFileSync } = await import("fs");
     const raw  = readFileSync(tmpPath, "utf-8");
-    const contentHash =
-      "0x" + crypto.createHash("sha256").update(raw).digest("hex");
+    const contentHash = ethers.keccak256(ethers.toUtf8Bytes(raw));
 
     let record: DecisionRecord;
     try {

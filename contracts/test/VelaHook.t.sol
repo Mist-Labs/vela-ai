@@ -54,6 +54,12 @@ contract TestableVelaHook is VelaHook {
         PolicyRegistry reg = PolicyRegistry(address(registry));
         if (reg.circuitBreakerTriggered(agent)) revert CircuitBreakerActive(agent);
         if (!reg.isActive(agent)) revert AgentNotActive(agent);
+        PolicyRegistry.PolicyCommitment memory policy = reg.getPolicy(agent);
+
+        uint8 currentHourUtc = uint8((block.timestamp / 1 hours) % 24);
+        if (currentHourUtc < policy.activeHoursStartUtc || currentHourUtc >= policy.activeHoursEndUtc) {
+            revert TradingHoursClosed(agent, currentHourUtc, policy.activeHoursStartUtc, policy.activeHoursEndUtc);
+        }
 
         bytes32 poolId = bytes32(PoolId.unwrap(key.toId()));
         if (!allowedPools[agent][poolId]) revert PoolNotAllowed(poolId);
@@ -63,7 +69,7 @@ contract TestableVelaHook is VelaHook {
             params.amountSpecified < 0 ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
 
         valueUsdc = _sqrtPriceToUsdc(sqrtPriceX96, absAmount);
-        PolicyRegistry.TierConfig memory cfg = reg.getTierConfig(uint8(reg.getPolicy(agent).tier));
+        PolicyRegistry.TierConfig memory cfg = reg.getTierConfig(uint8(policy.tier));
         uint256 maxValueUsdc = cfg.maxValuePerTxUsdc * 1e6;
         if (valueUsdc > maxValueUsdc) {
             revert ValueExceedsPolicy(valueUsdc, maxValueUsdc);
@@ -189,6 +195,16 @@ contract VelaHookTest is Test {
 
         SwapParams memory params = _swapParams(-0.1 ether);
         vm.expectRevert(abi.encodeWithSelector(VelaHook.CircuitBreakerActive.selector, agent));
+        hook.testBeforeSwap(agent, testPoolKey, params, _hookData(agent));
+    }
+
+    function test_beforeSwap_revert_outsideTradingHours() public {
+        vm.prank(agent);
+        registry.setTradingHours(agent, 10, 12);
+        vm.warp(13 hours);
+
+        SwapParams memory params = _swapParams(-0.1 ether);
+        vm.expectRevert(abi.encodeWithSelector(VelaHook.TradingHoursClosed.selector, agent, 13, 10, 12));
         hook.testBeforeSwap(agent, testPoolKey, params, _hookData(agent));
     }
 

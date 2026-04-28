@@ -21,30 +21,29 @@ import { ethers } from "ethers";
 import {
   createZeroGStorageClient,
   type DecisionRecord,
-  type PolicyConstraints,
-  type MarketData,
 } from "./zero-g.js";
 import {
   createZeroGComputeClient,
+  type MarketData,
+  type PolicyConstraints,
   type ZeroGComputeClient,
 } from "./zero-g-compute.js";
-import * as crypto from "crypto";
 
 // ─────────────────────────────── ABI stubs ───────────────────────────────────
 
 const VAULT_ABI = [
   "function commitDecision(bytes32 decisionHash, string calldata explanation, string calldata evidenceCID) external returns (uint256)",
   "function getDecisionHash(uint256 decisionId) external view returns (bytes32)",
-  "event DecisionCommitted(uint256 indexed decisionId, bytes32 decisionHash, string evidenceCID)",
+  "event DecisionCommitted(uint256 indexed id, bytes32 decisionHash, string explanation, string evidenceCID)",
 ];
 
 const ATTESTATION_ABI = [
-  "function verifyAndSettle(address vault, address agent, uint256 decisionId, bytes32 contentHash, bytes calldata sig) external",
+  "function verifyAndSettle(address vault, uint256 decisionId, bytes32 contentHash, bytes calldata sig) external",
 ];
 
 const POLICY_REGISTRY_ABI = [
   "function isActive(address agent) external view returns (bool)",
-  "function getPolicy(address agent) external view returns (tuple(bytes32 policyRoot, uint256 maxValuePerTxUsdc, uint256 maxAllocationPerPoolBps, uint256 stopLossBps, uint8 activeHoursStart, uint8 activeHoursEnd, bytes32 allowedPoolsHash, bool active, uint256 complianceScore))",
+  "function getPolicy(address agent) external view returns (tuple(address owner, address operator, bytes32 policyRoot, string policyURI, uint8 tier, uint256 maxValuePerTxUsdc, uint8 activeHoursStartUtc, uint8 activeHoursEndUtc, uint256 totalDecisions, uint256 compliantDecisions, uint256 complianceScore, bool active, bool circuitBreaker))",
 ];
 
 // Minimal PoolManager interface — only getSlot0 needed for market data.
@@ -71,10 +70,6 @@ function sqrtPriceX96ToUsdc(sqrtPriceX96: bigint): number {
   const Q96    = 2n ** 96n;
   const price  = (sqrtPriceX96 * sqrtPriceX96 * 10n ** 12n) / (Q96 * Q96);
   return Number(price) / 1e6;
-}
-
-function hashContent(content: string): string {
-  return "0x" + crypto.createHash("sha256").update(content).digest("hex");
 }
 
 // ─────────────────────────────── VelaAgent ───────────────────────────────────
@@ -273,10 +268,10 @@ export class VelaAgent {
     return {
       policyRoot:           policy.policyRoot,
       maxValuePerTxUsdc:    Number(policy.maxValuePerTxUsdc),
-      maxAllocationPerPool: Number(policy.maxAllocationPerPoolBps),
-      stopLossBps:          Number(policy.stopLossBps),
-      activeHoursStartUtc:  Number(policy.activeHoursStart),
-      activeHoursEndUtc:    Number(policy.activeHoursEnd),
+      maxAllocationPerPool: 10_000,
+      stopLossBps:          1_500,
+      activeHoursStartUtc:  Number(policy.activeHoursStartUtc),
+      activeHoursEndUtc:    Number(policy.activeHoursEndUtc),
       allowedPools:         [this.poolName], // simplified — full impl reads allowedPoolsHash
     };
   }
@@ -344,7 +339,6 @@ export class VelaAgent {
         // the watchtower will catch any integrity failures independently.
         const tx = await this.attestation.verifyAndSettle(
           this.vaultAddress,
-          this.agentAddress,
           decisionId,
           contentHash,
           enclaveSignature
@@ -375,7 +369,7 @@ export class VelaAgent {
       try {
         const parsed = iface.parseLog(log);
         if (parsed?.name === "DecisionCommitted") {
-          return parsed.args.decisionId as bigint;
+          return parsed.args.id as bigint;
         }
       } catch {
         // skip

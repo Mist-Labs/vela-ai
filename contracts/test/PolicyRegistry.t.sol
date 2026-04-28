@@ -37,6 +37,8 @@ contract PolicyRegistryTest {
         _assertEq(policy.policyURI, POLICY_URI);
         _assertEq(uint256(policy.tier), 0);
         _assertEq(policy.maxValuePerTxUsdc, 1_000);
+        _assertEq(policy.activeHoursStartUtc, 0);
+        _assertEq(policy.activeHoursEndUtc, 24);
         _assertEq(policy.complianceScore, registry.MAX_COMPLIANCE_SCORE());
         _assertTrue(policy.active);
         _assertFalse(policy.circuitBreaker);
@@ -80,6 +82,43 @@ contract PolicyRegistryTest {
         _assertEq(policy.compliantDecisions, 1);
         _assertEq(policy.complianceScore, 500);
         _assertTrue(registry.isActive(address(this)));
+    }
+
+    function testRegisterAgentWithPolicyStoresTradingHours() public {
+        registry.registerAgentWithPolicy(POLICY_ROOT, POLICY_URI, 1, 8, 18);
+
+        PolicyRegistry.PolicyCommitment memory policy = registry.getPolicy(address(this));
+        _assertEq(policy.maxValuePerTxUsdc, 10_000);
+        _assertEq(policy.activeHoursStartUtc, 8);
+        _assertEq(policy.activeHoursEndUtc, 18);
+    }
+
+    function testSetTradingHoursByOwner() public {
+        registry.registerAgent(POLICY_ROOT, POLICY_URI, 0);
+
+        registry.setTradingHours(address(this), 6, 20);
+
+        PolicyRegistry.PolicyCommitment memory policy = registry.getPolicy(address(this));
+        _assertEq(policy.activeHoursStartUtc, 6);
+        _assertEq(policy.activeHoursEndUtc, 20);
+    }
+
+    function testIsWithinTradingHours() public {
+        registry.registerAgentWithPolicy(POLICY_ROOT, POLICY_URI, 0, 9, 17);
+
+        vmWarp(10 hours);
+        _assertTrue(registry.isWithinTradingHours(address(this)));
+
+        vmWarp(18 hours);
+        _assertFalse(registry.isWithinTradingHours(address(this)));
+    }
+
+    function testRejectsInvalidActiveHours() public {
+        try registry.registerAgentWithPolicy(POLICY_ROOT, POLICY_URI, 0, 18, 9) {
+            revert("expected invalid active hours revert");
+        } catch (bytes memory reason) {
+            _assertEq(_selector(reason), PolicyRegistry.InvalidActiveHours.selector);
+        }
     }
 
     function testAutoBreakAfterTenLowComplianceDecisions() public {
@@ -154,5 +193,11 @@ contract PolicyRegistryTest {
 
     function _assertEq(uint256 actual, uint256 expected) private pure {
         if (actual != expected) revert("uint256 assertion failed");
+    }
+
+    function vmWarp(uint256 timestamp) private {
+        address vm = address(uint160(uint256(keccak256("hevm cheat code"))));
+        (bool ok,) = vm.call(abi.encodeWithSignature("warp(uint256)", timestamp));
+        if (!ok) revert("warp failed");
     }
 }

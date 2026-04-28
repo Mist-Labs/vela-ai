@@ -43,7 +43,7 @@ if (!VAULT_ADDRESS || !AGENT_ADDRESS || !PRIVATE_KEY) {
 
 const VAULT_ABI = [
   "function commitDecision(bytes32 decisionHash, string calldata explanation, string calldata evidenceCID) external returns (uint256)",
-  "event DecisionCommitted(uint256 indexed decisionId, bytes32 decisionHash, string evidenceCID)",
+  "event DecisionCommitted(uint256 indexed id, bytes32 decisionHash, string explanation, string evidenceCID)",
 ];
 
 // ─────────────────────────────── helpers ─────────────────────────────────────
@@ -112,13 +112,7 @@ async function uploadToZeroG(
 }
 
 function hashRecord(record: object): string {
-  return (
-    "0x" +
-    crypto
-      .createHash("sha256")
-      .update(JSON.stringify(record))
-      .digest("hex")
-  );
+  return ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(record)));
 }
 
 // ─────────────────────────────── main ────────────────────────────────────────
@@ -164,7 +158,7 @@ async function main() {
     try {
       const parsed = iface.parseLog(log);
       if (parsed?.name === "DecisionCommitted") {
-        decisionId = parsed.args.decisionId;
+        decisionId = parsed.args.id;
       }
     } catch {
       // skip non-matching logs

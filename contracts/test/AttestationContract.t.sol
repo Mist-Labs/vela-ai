@@ -9,6 +9,7 @@ import "../src/AttestationContract.sol";
 contract MockVault {
     mapping(uint256 => bytes32) private _hashes;
     mapping(uint256 => bool) private _attested;
+    address public agent = address(0xBEEF);
 
     function setDecisionHash(uint256 id, bytes32 h) external {
         _hashes[id] = h;
@@ -98,7 +99,7 @@ contract AttestationContractTest is Test {
         vm.expectEmit(true, true, true, true);
         emit AttestationContract.DecisionSettled(address(vault), DECISION_ID, enclaveAddr, contentHash);
 
-        ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, contentHash, sig);
+        ac.verifyAndSettle(address(vault), DECISION_ID, contentHash, sig);
 
         // Vault marked attested.
         assertTrue(vault.isAttested(DECISION_ID));
@@ -121,7 +122,7 @@ contract AttestationContractTest is Test {
         bytes memory sig = _sign(UNREGISTERED_PRIVKEY, contentHash);
 
         vm.expectRevert(abi.encodeWithSelector(AttestationContract.UnregisteredEnclave.selector, unregisteredAddr));
-        ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, contentHash, sig);
+        ac.verifyAndSettle(address(vault), DECISION_ID, contentHash, sig);
 
         // Nothing should have changed.
         assertFalse(vault.isAttested(DECISION_ID));
@@ -142,7 +143,7 @@ contract AttestationContractTest is Test {
         bytes memory sig = _sign(ENCLAVE_PRIVKEY, tamperedHash);
 
         vm.expectRevert(abi.encodeWithSelector(AttestationContract.HashMismatch.selector, committedHash, tamperedHash));
-        ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, tamperedHash, sig);
+        ac.verifyAndSettle(address(vault), DECISION_ID, tamperedHash, sig);
 
         assertFalse(vault.isAttested(DECISION_ID));
         assertFalse(ac.isSettled(address(vault), DECISION_ID));
@@ -156,13 +157,13 @@ contract AttestationContractTest is Test {
         bytes memory sig = _sign(ENCLAVE_PRIVKEY, contentHash);
 
         // First call succeeds.
-        ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, contentHash, sig);
+        ac.verifyAndSettle(address(vault), DECISION_ID, contentHash, sig);
 
         // Second call must revert.
         vm.expectRevert(
             abi.encodeWithSelector(AttestationContract.AlreadySettled.selector, address(vault), DECISION_ID)
         );
-        ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, contentHash, sig);
+        ac.verifyAndSettle(address(vault), DECISION_ID, contentHash, sig);
     }
 
     // ── test: reportFailure triggers circuit breaker ──────────────────────────
@@ -174,7 +175,7 @@ contract AttestationContractTest is Test {
         vm.expectEmit(true, true, false, true);
         emit AttestationContract.AttestationFailure(address(vault), DECISION_ID, "TEE signature mismatch");
 
-        ac.reportFailure(address(vault), AGENT, DECISION_ID, "TEE signature mismatch");
+        ac.reportFailure(address(vault), DECISION_ID, "TEE signature mismatch");
 
         assertTrue(registry.circuitBroken());
         assertEq(registry.invalidAttestations(), 1);
@@ -219,7 +220,7 @@ contract AttestationContractTest is Test {
         ac.revokeEnclaveKey(enclaveAddr);
 
         vm.expectRevert(abi.encodeWithSelector(AttestationContract.UnregisteredEnclave.selector, enclaveAddr));
-        ac.verifyAndSettle(address(vault), AGENT, DECISION_ID, contentHash, sig);
+        ac.verifyAndSettle(address(vault), DECISION_ID, contentHash, sig);
     }
 
     // ── test: zero address registry reverts in constructor ───────────────────

@@ -260,11 +260,10 @@ export class ZeroGComputeClient {
    * the hash integrity chain even without a real TDX report.
    */
   private _buildStubAttestation(inputPrompt: string): TeeAttestation {
-    const crypto = require("crypto") as typeof import("crypto");
     return {
       enclave_id: "0xSTUB_ENCLAVE_TESTNET",
       model:      this.model,
-      input_hash: "0x" + crypto.createHash("sha256").update(inputPrompt).digest("hex"),
+      input_hash: ethers.keccak256(ethers.toUtf8Bytes(inputPrompt)),
       signature:  "0xSTUB_SIGNATURE_TESTNET",
       report:     Buffer.from("STUB_TDX_REPORT_TESTNET").toString("base64"),
       tee_mode:   "TeeTLS",
