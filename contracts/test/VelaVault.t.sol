@@ -370,6 +370,8 @@ contract VelaVaultTest is Test {
         vm.prank(agentAddr);
         hook.setAgentExecutor(agentAddr, address(vault));
 
+        stateView.setSqrtPrice(PoolId.wrap(poolId), SQRT_PRICE_2000_USDC_PER_ETH);
+        vault.addPosition(PoolId.wrap(poolId), address(positionToken), true);
         vault.setTrustedHook(address(hook));
         asset.mint(address(vault), 500e6);
         positionToken.mint(address(poolManager), 1 ether);
@@ -388,6 +390,34 @@ contract VelaVaultTest is Test {
         assertEq(amountOut, 0.1 ether);
         assertEq(asset.balanceOf(address(vault)), 300e6);
         assertEq(positionToken.balanceOf(address(vault)), 0.1 ether);
+    }
+
+    function test_executeHookSwap_revert_unsupportedCurrency() public {
+        PoolKey memory key = _hookPoolKey();
+        bytes32 poolId = hook.getPoolId(key);
+        bytes32[] memory pools = new bytes32[](1);
+        bool[] memory allowed = new bool[](1);
+        pools[0] = poolId;
+        allowed[0] = true;
+
+        vm.prank(agentAddr);
+        hook.setAllowedPools(agentAddr, pools, allowed);
+        vm.prank(agentAddr);
+        hook.setAgentExecutor(agentAddr, address(vault));
+
+        vault.setTrustedHook(address(hook));
+
+        vm.prank(agentAddr);
+        vm.expectRevert(abi.encodeWithSelector(VelaVault.UnsupportedSwapCurrency.selector, address(positionToken)));
+        vault.executeHookSwap(
+            VelaVault.HookSwapParams({
+                key: key,
+                zeroForOne: false,
+                amountIn: 200e6,
+                minAmountOut: 0,
+                sqrtPriceLimitX96: MAX_SQRT_PRICE_MINUS_ONE
+            })
+        );
     }
 
     function test_executeHookSwap_revert_untrustedHook() public {

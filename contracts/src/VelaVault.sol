@@ -50,6 +50,7 @@ contract VelaVault is ERC4626, ReentrancyGuard, IUnlockCallback {
     error NativeCurrencyUnsupported();
     error ExactInputOnly();
     error InsufficientSwapOutput(uint256 received, uint256 minimum);
+    error UnsupportedSwapCurrency(address token);
 
     // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,7 @@ contract VelaVault is ERC4626, ReentrancyGuard, IUnlockCallback {
     mapping(uint256 => DecisionRecord) private _decisions;
     PoolPosition[] private _positions;
     mapping(bytes32 positionKey => bool configured) private _positionConfigured;
+    mapping(address token => bool supported) public supportedSwapToken;
 
     // ─── Events ───────────────────────────────────────────────────────────────
 
@@ -139,6 +141,7 @@ contract VelaVault is ERC4626, ReentrancyGuard, IUnlockCallback {
         attestationContract = attestationContract_;
         poolManager = IPoolManager(poolManager_);
         poolStateView = IV4StateView(poolStateView_);
+        supportedSwapToken[address(asset_)] = true;
     }
 
     // ─── Decision Feed ────────────────────────────────────────────────────────
@@ -208,6 +211,7 @@ contract VelaVault is ERC4626, ReentrancyGuard, IUnlockCallback {
             })
         );
         _positionConfigured[key] = true;
+        supportedSwapToken[token] = true;
 
         emit PositionAdded(index, poolId, token, tokenIsCurrency0, balance);
     }
@@ -244,6 +248,8 @@ contract VelaVault is ERC4626, ReentrancyGuard, IUnlockCallback {
         {
             revert NativeCurrencyUnsupported();
         }
+        _requireSupportedCurrency(params.key.currency0);
+        _requireSupportedCurrency(params.key.currency1);
         if (params.amountIn == 0) revert ExactInputOnly();
 
         amountOut = abi.decode(poolManager.unlock(abi.encode(params)), (uint256));
@@ -375,6 +381,7 @@ contract VelaVault is ERC4626, ReentrancyGuard, IUnlockCallback {
 
     function _settleIfDebt(Currency currency, int128 delta) private {
         if (delta >= 0) return;
+        _requireSupportedCurrency(currency);
         uint256 amount = uint256(uint128(-delta));
         poolManager.sync(currency);
         IERC20(Currency.unwrap(currency)).safeTransfer(address(poolManager), amount);
@@ -383,7 +390,13 @@ contract VelaVault is ERC4626, ReentrancyGuard, IUnlockCallback {
 
     function _takeIfCredit(Currency currency, int128 delta) private returns (uint256 amount) {
         if (delta <= 0) return 0;
+        _requireSupportedCurrency(currency);
         amount = uint256(uint128(delta));
         poolManager.take(currency, address(this), amount);
+    }
+
+    function _requireSupportedCurrency(Currency currency) private view {
+        address token = Currency.unwrap(currency);
+        if (!supportedSwapToken[token]) revert UnsupportedSwapCurrency(token);
     }
 }
