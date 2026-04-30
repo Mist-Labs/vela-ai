@@ -40,6 +40,8 @@ contract Deploy is Script {
         address vaultAsset = vm.envOr("VAULT_ASSET_ADDRESS", USDC_BASE_SEPOLIA);
         address agentAddr = vm.envOr("AGENT_ADDRESS", deployer);
         address enclaveKey = vm.envOr("REGISTERED_ENCLAVE_KEY", address(0));
+        address watchtower = vm.envOr("WATCHTOWER_ADDRESS", address(0));
+        address velaHook = vm.envOr("VELA_HOOK_ADDRESS", address(0));
         address poolManager = vm.envOr("POOL_MANAGER_ADDRESS", POOL_MANAGER_BASE_SEPOLIA);
         address stateView = vm.envOr("STATE_VIEW_ADDRESS", STATE_VIEW_BASE_SEPOLIA);
 
@@ -48,6 +50,8 @@ contract Deploy is Script {
         console2.log("Vault asset:  ", vaultAsset);
         console2.log("Agent:        ", agentAddr);
         console2.log("Enclave key:  ", enclaveKey);
+        console2.log("Watchtower:   ", watchtower);
+        console2.log("VelaHook:     ", velaHook);
         console2.log("PoolManager:  ", poolManager);
         console2.log("StateView:    ", stateView);
         console2.log("");
@@ -80,6 +84,20 @@ contract Deploy is Script {
             console2.log("WARNING: No enclave key provided. Register manually after DCAP verification.");
         }
 
+        if (watchtower != address(0)) {
+            attestationContract.setWatchtower(watchtower, true);
+            console2.log("Watchtower authorized:", watchtower);
+        } else {
+            console2.log("WARNING: No watchtower provided. Authorize before live tests.");
+        }
+
+        if (velaHook != address(0)) {
+            velaVault.setTrustedHook(velaHook);
+            console2.log("Trusted hook configured:", velaHook);
+        } else {
+            console2.log("WARNING: No hook provided. Run HookMiner.s.sol and setTrustedHook before agent start.");
+        }
+
         vm.stopBroadcast();
 
         // ── Print .env block ─────────────────────────────────────────────────
@@ -88,6 +106,7 @@ contract Deploy is Script {
         console2.log("POLICY_REGISTRY_ADDRESS=", address(policyRegistry));
         console2.log("VELA_VAULT_ADDRESS=", address(velaVault));
         console2.log("ATTESTATION_CONTRACT_ADDRESS=", address(attestationContract));
+        console2.log("VELA_HOOK_ADDRESS=", velaHook);
         console2.log("POOL_MANAGER_ADDRESS=", poolManager);
         console2.log("STATE_VIEW_ADDRESS=", stateView);
         console2.log("");

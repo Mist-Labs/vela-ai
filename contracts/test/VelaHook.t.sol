@@ -34,7 +34,7 @@ contract MockPoolManager {
 
 /// @dev Deployable VelaHook wrapper for testing (bypasses CREATE2 address check).
 contract TestableVelaHook is VelaHook {
-    constructor(address poolManager_, address registry_) VelaHook(IPoolManager(poolManager_), registry_) {}
+    constructor(address poolManager_, address registry_) VelaHook(IPoolManager(poolManager_), registry_, false) {}
 
     /// @dev Expose internal price math for unit testing.
     function exposedSqrtPriceToUsdc(uint160 sqrtPriceX96, uint256 amount) external pure returns (uint256) {

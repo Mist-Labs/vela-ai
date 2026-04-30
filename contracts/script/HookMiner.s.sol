@@ -26,7 +26,7 @@ import {VelaHook} from "../src/hooks/VelaHook.sol";
 ///   VELA_HOOK_ADDRESS=<printed address>
 contract HookMiner is Script {
     // Base Sepolia PoolManager (Uniswap v4 deployment)
-    address constant POOL_MANAGER = 0x05e73354cFdD6745c338B50bcfDFA14A7E33F5c3;
+    address constant POOL_MANAGER_BASE_SEPOLIA = 0x05e73354cFdD6745c338B50bcfDFA14A7E33F5c3;
 
     // Required hook flags for VelaHook: only beforeSwap = true
     uint160 constant REQUIRED_FLAGS = uint160(Hooks.BEFORE_SWAP_FLAG);
@@ -35,20 +35,22 @@ contract HookMiner is Script {
         uint256 deployerKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerKey);
         address policyRegistry = vm.envAddress("POLICY_REGISTRY_ADDRESS");
+        address poolManager = vm.envOr("POOL_MANAGER_ADDRESS", POOL_MANAGER_BASE_SEPOLIA);
 
         console2.log("Mining CREATE2 salt for VelaHook...");
         console2.log("Required flags:", REQUIRED_FLAGS);
         console2.log("PolicyRegistry:", policyRegistry);
+        console2.log("PoolManager:", poolManager);
 
         // Mine salt
-        (address hookAddr, bytes32 salt) = _mine(deployer, policyRegistry, REQUIRED_FLAGS);
+        (address hookAddr, bytes32 salt) = _mine(deployer, poolManager, policyRegistry, REQUIRED_FLAGS);
 
         console2.log("Found salt:", uint256(salt));
         console2.log("Hook address:", hookAddr);
 
         // Deploy
         vm.startBroadcast(deployerKey);
-        VelaHook hook = new VelaHook{salt: salt}(IPoolManager(POOL_MANAGER), policyRegistry);
+        VelaHook hook = new VelaHook{salt: salt}(IPoolManager(poolManager), policyRegistry, true);
         vm.stopBroadcast();
 
         require(address(hook) == hookAddr, "HookMiner: address mismatch");
@@ -56,18 +58,18 @@ contract HookMiner is Script {
         console2.log("");
         console2.log("=== Add to .env ===");
         console2.log("VELA_HOOK_ADDRESS=", address(hook));
-        console2.log("POOL_MANAGER_ADDRESS=", POOL_MANAGER);
+        console2.log("POOL_MANAGER_ADDRESS=", poolManager);
     }
 
     /// @dev Iterates salts until the resulting CREATE2 address has the
     ///      required Hooks permission bits set. Off-chain computation only.
-    function _mine(address deployer, address registryAddr, uint160 requiredFlags)
+    function _mine(address deployer, address poolManager, address registryAddr, uint160 requiredFlags)
         internal
         pure
         returns (address hookAddr, bytes32 salt)
     {
         bytes memory creationCode =
-            abi.encodePacked(type(VelaHook).creationCode, abi.encode(POOL_MANAGER, registryAddr));
+            abi.encodePacked(type(VelaHook).creationCode, abi.encode(poolManager, registryAddr, true));
         bytes32 initCodeHash = keccak256(creationCode);
 
         uint256 nonce;

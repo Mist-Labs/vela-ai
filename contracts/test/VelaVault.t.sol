@@ -130,7 +130,7 @@ contract VelaVaultTest is Test {
         stateView = new MockStateView();
         poolManager = new MockSwapPoolManager();
         registry = new PolicyRegistry(owner);
-        hook = new VelaHook(IPoolManager(address(poolManager)), address(registry));
+        hook = new VelaHook(IPoolManager(address(poolManager)), address(registry), false);
 
         vault =
             new VelaVault(asset, agentAddr, address(registry), attestation, address(poolManager), address(stateView));

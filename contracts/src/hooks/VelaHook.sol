@@ -37,6 +37,7 @@ import {PolicyRegistry} from "../PolicyRegistry.sol";
 ///         the address flags encode `beforeSwap = true`. Use script/HookMiner.s.sol.
 contract VelaHook is IHooks {
     using PoolIdLibrary for PoolKey;
+    using Hooks for IHooks;
     using StateLibrary for IPoolManager;
     using FixedPointMathLib for uint256;
 
@@ -83,11 +84,14 @@ contract VelaHook is IHooks {
 
     // ─── Constructor ──────────────────────────────────────────────────────────
 
-    constructor(IPoolManager poolManager_, address registry_) {
+    constructor(IPoolManager poolManager_, address registry_, bool validateAddress) {
         if (address(poolManager_) == address(0)) revert ZeroAddress();
         if (registry_ == address(0)) revert ZeroAddress();
         poolManager = poolManager_;
         registry = PolicyRegistry(registry_);
+        if (validateAddress) {
+            IHooks(address(this)).validateHookPermissions(getHookPermissions());
+        }
     }
 
     modifier onlyPoolManager() {
