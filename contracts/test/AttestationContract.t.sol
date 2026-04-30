@@ -58,6 +58,7 @@ contract AttestationContractTest is Test {
     address internal unregisteredAddr;
 
     address internal constant AGENT = address(0xBEEF);
+    address internal constant WATCHTOWER = address(0xA11CE);
     uint256 internal constant DECISION_ID = 1;
 
     function setUp() public {
@@ -179,6 +180,39 @@ contract AttestationContractTest is Test {
 
         assertTrue(registry.circuitBroken());
         assertEq(registry.invalidAttestations(), 1);
+    }
+
+    function test_reportFailure_byWatchtower_triggersCircuitBreaker() public {
+        ac.setWatchtower(WATCHTOWER, true);
+
+        vm.prank(WATCHTOWER);
+        ac.reportFailure(address(vault), DECISION_ID, "TEE signature mismatch");
+
+        assertTrue(registry.circuitBroken());
+        assertEq(registry.invalidAttestations(), 1);
+    }
+
+    function test_reportFailure_revert_unauthorized() public {
+        vm.prank(address(0xBAD));
+        vm.expectRevert(abi.encodeWithSelector(AttestationContract.UnauthorizedReporter.selector, address(0xBAD)));
+        ac.reportFailure(address(vault), DECISION_ID, "TEE signature mismatch");
+
+        assertFalse(registry.circuitBroken());
+        assertEq(registry.invalidAttestations(), 0);
+    }
+
+    function test_setWatchtower_revert_notOwner() public {
+        vm.prank(address(0xBAD));
+        vm.expectRevert();
+        ac.setWatchtower(WATCHTOWER, true);
+    }
+
+    function test_setWatchtower_revoke() public {
+        ac.setWatchtower(WATCHTOWER, true);
+        assertTrue(ac.watchtowers(WATCHTOWER));
+
+        ac.setWatchtower(WATCHTOWER, false);
+        assertFalse(ac.watchtowers(WATCHTOWER));
     }
 
     // ── test: admin key management ────────────────────────────────────────────

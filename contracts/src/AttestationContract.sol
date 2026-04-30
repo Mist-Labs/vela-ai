@@ -43,6 +43,9 @@ contract AttestationContract is Ownable {
     /// @dev Tracks which (vault, decisionId) pairs have been settled.
     mapping(address => mapping(uint256 => bool)) public settled;
 
+    /// @dev Watchtower accounts authorized to report integrity failures.
+    mapping(address => bool) public watchtowers;
+
     IPolicyRegistry public immutable registry;
 
     // ─────────────────────────────── errors ─────────────────────────────────
@@ -51,11 +54,13 @@ contract AttestationContract is Ownable {
     error HashMismatch(bytes32 expected, bytes32 provided);
     error AlreadySettled(address vault, uint256 decisionId);
     error ZeroAddress();
+    error UnauthorizedReporter(address reporter);
 
     // ─────────────────────────────── events ─────────────────────────────────
 
     event EnclaveKeyRegistered(address indexed enclaveKey);
     event EnclaveKeyRevoked(address indexed enclaveKey);
+    event WatchtowerUpdated(address indexed watchtower, bool authorized);
     event DecisionSettled(
         address indexed vault, uint256 indexed decisionId, address indexed enclave, bytes32 contentHash
     );
@@ -86,6 +91,16 @@ contract AttestationContract is Ownable {
     function revokeEnclaveKey(address enclaveKey) external onlyOwner {
         registeredEnclaveKeys[enclaveKey] = false;
         emit EnclaveKeyRevoked(enclaveKey);
+    }
+
+    /**
+     * @notice Authorize or revoke a watchtower account that can report
+     *         integrity failures and trigger the circuit breaker.
+     */
+    function setWatchtower(address watchtower, bool authorized) external onlyOwner {
+        if (watchtower == address(0)) revert ZeroAddress();
+        watchtowers[watchtower] = authorized;
+        emit WatchtowerUpdated(watchtower, authorized);
     }
 
     // ─────────────────────────── core verification ───────────────────────────
@@ -146,8 +161,9 @@ contract AttestationContract is Ownable {
      */
     function reportFailure(address vault, uint256 decisionId, string calldata reason) external {
         if (vault == address(0)) revert ZeroAddress();
-        // In production: restrict to watchtower role via AccessControl.
-        // For the hackathon: anyone can report - watchtower is the caller.
+        if (msg.sender != owner() && !watchtowers[msg.sender]) {
+            revert UnauthorizedReporter(msg.sender);
+        }
         emit AttestationFailure(vault, decisionId, reason);
         address agent = IVelaVault(vault).agent();
         registry.recordAttestation(agent, false);
