@@ -68,7 +68,8 @@ contract TestableVelaHook is VelaHook {
         uint256 absAmount =
             params.amountSpecified < 0 ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
 
-        valueUsdc = _sqrtPriceToUsdc(sqrtPriceX96, absAmount);
+        bool amountIsCurrency0 = params.amountSpecified < 0 ? params.zeroForOne : !params.zeroForOne;
+        valueUsdc = amountIsCurrency0 ? _sqrtPriceToUsdc(sqrtPriceX96, absAmount) : absAmount;
         PolicyRegistry.TierConfig memory cfg = reg.getTierConfig(uint8(policy.tier));
         uint256 maxValueUsdc = cfg.maxValuePerTxUsdc * 1e6;
         if (valueUsdc > maxValueUsdc) {
@@ -265,10 +266,18 @@ contract VelaHookTest is Test {
     }
 
     function test_beforeSwap_positiveAmountSpecified_treated_as_abs() public view {
-        // exactOutput swap: amountSpecified > 0
-        SwapParams memory params = _swapParams(0.1 ether);
+        // exactOutput token0 -> token1: amountSpecified is token1 (USDC) output units.
+        SwapParams memory params = _swapParams(100e6);
         (bytes4 sel,) = hook.testBeforeSwap(agent, testPoolKey, params, _hookData(agent));
         assertEq(sel, VelaHook.beforeSwap.selector);
+    }
+
+    function test_beforeSwap_usdcInputUsesUsdcAmountDirectly() public view {
+        // token1 -> token0 exact input: amountSpecified is already USDC units.
+        SwapParams memory params = SwapParams({zeroForOne: false, amountSpecified: -500e6, sqrtPriceLimitX96: 0});
+        (bytes4 sel, uint256 valueUsdc) = hook.testBeforeSwap(agent, testPoolKey, params, _hookData(agent));
+        assertEq(sel, VelaHook.beforeSwap.selector);
+        assertEq(valueUsdc, 500e6);
     }
 
     // ─── setAllowedPools ──────────────────────────────────────────────────────

@@ -30,6 +30,12 @@ contract MockStateView {
     }
 }
 
+contract MockPoolManager {
+    function unlock(bytes calldata) external pure returns (bytes memory) {
+        return "";
+    }
+}
+
 /// @title  IntegrationTest
 /// @notice Exercises the real-time Vela attestation and watchtower pause paths.
 contract IntegrationTest is Test {
@@ -38,6 +44,7 @@ contract IntegrationTest is Test {
     VelaVault vault;
     AttestationContract attestation;
     MockStateView stateView;
+    MockPoolManager poolManager;
 
     uint256 internal constant ENCLAVE_PRIVKEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     address internal enclaveKey;
@@ -55,7 +62,10 @@ contract IntegrationTest is Test {
         registry = new PolicyRegistry(owner);
         attestation = new AttestationContract(address(registry));
         stateView = new MockStateView();
-        vault = new VelaVault(asset, agent, address(registry), address(attestation), address(stateView));
+        poolManager = new MockPoolManager();
+        vault = new VelaVault(
+            asset, agent, address(registry), address(attestation), address(poolManager), address(stateView)
+        );
 
         enclaveKey = vm.addr(ENCLAVE_PRIVKEY);
         attestation.registerEnclaveKey(enclaveKey);

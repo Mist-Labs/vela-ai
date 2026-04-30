@@ -3,8 +3,17 @@ pragma solidity ^0.8.24;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
+import {BalanceDelta, toBalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {Currency} from "v4-core/types/Currency.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
+import {SwapParams} from "v4-core/types/PoolOperation.sol";
 import {VelaVault} from "../src/VelaVault.sol";
+import {VelaHook} from "../src/hooks/VelaHook.sol";
 import {PolicyRegistry} from "../src/PolicyRegistry.sol";
 
 /// @dev Minimal ERC-20 for testing
@@ -44,12 +53,61 @@ contract MockStateView {
     }
 }
 
+contract MockSwapPoolManager {
+    mapping(bytes32 => uint160) public sqrtPrices;
+    uint256 public amountOut = 0.1 ether;
+
+    function setSqrtPrice(PoolId poolId, uint160 sqrtPriceX96) external {
+        sqrtPrices[PoolId.unwrap(poolId)] = sqrtPriceX96;
+    }
+
+    function setAmountOut(uint256 nextAmountOut) external {
+        amountOut = nextAmountOut;
+    }
+
+    function unlock(bytes calldata data) external returns (bytes memory) {
+        return IUnlockCallback(msg.sender).unlockCallback(data);
+    }
+
+    function swap(PoolKey memory key, SwapParams memory params, bytes calldata hookData)
+        external
+        returns (BalanceDelta)
+    {
+        key.hooks.beforeSwap(address(this), key, params, hookData);
+        uint256 amountIn =
+            params.amountSpecified < 0 ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
+
+        if (params.zeroForOne) {
+            return toBalanceDelta(-int128(int256(amountIn)), int128(int256(amountOut)));
+        }
+        return toBalanceDelta(int128(int256(amountOut)), -int128(int256(amountIn)));
+    }
+
+    function sync(Currency) external {}
+
+    function settle() external payable returns (uint256) {
+        return 0;
+    }
+
+    function take(Currency currency, address to, uint256 amount) external {
+        IERC20(Currency.unwrap(currency)).transfer(to, amount);
+    }
+
+    function extsload(bytes32) external view returns (bytes32) {
+        return bytes32(uint256(SQRT_PRICE_2000_USDC_PER_ETH));
+    }
+
+    uint160 private constant SQRT_PRICE_2000_USDC_PER_ETH = 3_543_191_142_285_914_205_922_034;
+}
+
 contract VelaVaultTest is Test {
     MockERC20 public asset;
     MockPositionToken public positionToken;
     MockStateView public stateView;
+    MockSwapPoolManager public poolManager;
     PolicyRegistry public registry;
     VelaVault public vault;
+    VelaHook public hook;
 
     address public owner = makeAddr("owner");
     address public agentAddr = makeAddr("agent");
@@ -64,15 +122,20 @@ contract VelaVaultTest is Test {
     string constant EVIDENCE_CID = "0g://evidence-cid-abc123";
     PoolId constant ETH_USDC_POOL_ID = PoolId.wrap(bytes32(uint256(1)));
     uint160 constant SQRT_PRICE_2000_USDC_PER_ETH = 3_543_191_142_285_914_205_922_034;
+    uint160 constant MAX_SQRT_PRICE_MINUS_ONE = 1_461_446_703_485_210_103_287_273_052_203_988_822_378_723_970_341;
 
     function setUp() public {
         asset = new MockERC20();
         positionToken = new MockPositionToken();
         stateView = new MockStateView();
+        poolManager = new MockSwapPoolManager();
         registry = new PolicyRegistry(owner);
+        hook = new VelaHook(IPoolManager(address(poolManager)), address(registry));
 
-        vault = new VelaVault(asset, agentAddr, address(registry), attestation, address(stateView));
+        vault =
+            new VelaVault(asset, agentAddr, address(registry), attestation, address(poolManager), address(stateView));
         stateView.setSqrtPrice(ETH_USDC_POOL_ID, SQRT_PRICE_2000_USDC_PER_ETH);
+        poolManager.setSqrtPrice(ETH_USDC_POOL_ID, SQRT_PRICE_2000_USDC_PER_ETH);
 
         vm.prank(owner);
         registry.setContracts(attestation);
@@ -292,6 +355,68 @@ contract VelaVaultTest is Test {
         assertEq(vault.getPosition(0).balance, 2 ether);
     }
 
+    // ─── Hook-Enforced Trading ───────────────────────────────────────────────
+
+    function test_executeHookSwap_usesVaultCapitalAndVelaHook() public {
+        PoolKey memory key = _hookPoolKey();
+        bytes32 poolId = hook.getPoolId(key);
+        bytes32[] memory pools = new bytes32[](1);
+        bool[] memory allowed = new bool[](1);
+        pools[0] = poolId;
+        allowed[0] = true;
+
+        vm.prank(agentAddr);
+        hook.setAllowedPools(agentAddr, pools, allowed);
+
+        vault.setTrustedHook(address(hook));
+        asset.mint(address(vault), 500e6);
+        positionToken.mint(address(poolManager), 1 ether);
+
+        VelaVault.HookSwapParams memory params = VelaVault.HookSwapParams({
+            key: key,
+            zeroForOne: false,
+            amountIn: 200e6,
+            minAmountOut: 0.09 ether,
+            sqrtPriceLimitX96: MAX_SQRT_PRICE_MINUS_ONE
+        });
+
+        vm.prank(agentAddr);
+        uint256 amountOut = vault.executeHookSwap(params);
+
+        assertEq(amountOut, 0.1 ether);
+        assertEq(asset.balanceOf(address(vault)), 300e6);
+        assertEq(positionToken.balanceOf(address(vault)), 0.1 ether);
+    }
+
+    function test_executeHookSwap_revert_untrustedHook() public {
+        VelaVault.HookSwapParams memory params = VelaVault.HookSwapParams({
+            key: _hookPoolKey(),
+            zeroForOne: false,
+            amountIn: 200e6,
+            minAmountOut: 0,
+            sqrtPriceLimitX96: MAX_SQRT_PRICE_MINUS_ONE
+        });
+
+        vm.prank(agentAddr);
+        vm.expectRevert(VelaVault.HookNotConfigured.selector);
+        vault.executeHookSwap(params);
+    }
+
+    function test_executeHookSwap_revert_onlyAgent() public {
+        vault.setTrustedHook(address(hook));
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(VelaVault.OnlyAgent.selector, stranger));
+        vault.executeHookSwap(
+            VelaVault.HookSwapParams({
+                key: _hookPoolKey(),
+                zeroForOne: false,
+                amountIn: 200e6,
+                minAmountOut: 0,
+                sqrtPriceLimitX96: MAX_SQRT_PRICE_MINUS_ONE
+            })
+        );
+    }
+
     // ─── Circuit Breaker: ERC-20 Transfer Blocking ────────────────────────────
 
     function test_circuitBreaker_blocksDeposit() public {
@@ -389,5 +514,15 @@ contract VelaVaultTest is Test {
 
         // Allow 1 wei rounding error
         assertApproxEqAbs(out, amount, 1);
+    }
+
+    function _hookPoolKey() private view returns (PoolKey memory) {
+        return PoolKey({
+            currency0: Currency.wrap(address(positionToken)),
+            currency1: Currency.wrap(address(asset)),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(hook))
+        });
     }
 }

@@ -128,12 +128,12 @@ export class ZeroGComputeClient {
    * Verifies provider TEE attestation and ensures sub-account is funded.
    */
   async init(): Promise<void> {
-    this.broker = await createZGComputeNetworkBroker(this.wallet);
+    this.broker = await createZGComputeNetworkBroker(this.wallet as never);
 
     // Verify provider TEE attestation before first use.
     console.log(`[0G Compute] Verifying provider ${this.providerAddress}…`);
     try {
-      await this.broker.inference.verifyService(this.providerAddress, () => {});
+      await this.broker.inference.verifyService(this.providerAddress, ".");
       console.log("[0G Compute] Provider TEE attestation verified.");
     } catch (err) {
       // Non-fatal on testnet — log and continue.
@@ -177,23 +177,58 @@ export class ZeroGComputeClient {
 
     const userPrompt = buildDecisionPrompt(market, constraints);
 
-    // The broker handles authentication, payment, and TEE attestation.
-    const response = await this.broker.inference.requestService(
+    const requestBody = {
+      model: this.model,
+      messages: [
+        { role: "system", content: VELA_TRADING_SYSTEM_PROMPT },
+        { role: "user",   content: userPrompt },
+      ],
+      // Keep responses deterministic and concise.
+      temperature: 0,
+      max_tokens:  256,
+    };
+
+    const { endpoint, model } = await this.broker.inference.getServiceMetadata(
+      this.providerAddress
+    );
+    const headers = await this.broker.inference.getRequestHeaders(
       this.providerAddress,
-      {
-        model: this.model,
-        messages: [
-          { role: "system", content: VELA_TRADING_SYSTEM_PROMPT },
-          { role: "user",   content: userPrompt },
-        ],
-        // Keep responses deterministic and concise.
-        temperature: 0,
-        max_tokens:  256,
-      }
+      JSON.stringify(requestBody)
     );
 
+    const httpResponse = await fetch(`${endpoint}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ ...requestBody, model }),
+    });
+
+    if (!httpResponse.ok) {
+      const body = await httpResponse.text();
+      throw new Error(
+        `[0G Compute] Inference request failed: ${httpResponse.status} ${body}`
+      );
+    }
+
+    const chatId = httpResponse.headers.get("ZG-Res-Key");
+    const response = await httpResponse.json() as {
+      id?: string;
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: unknown;
+      teeAttestation?: unknown;
+      metadata?: { teeAttestation?: unknown };
+    };
+
+    const processed = await this.broker.inference.processResponse(
+      this.providerAddress,
+      chatId ?? response.id,
+      JSON.stringify(response.usage ?? {})
+    );
+    if (processed !== true) {
+      throw new Error("[0G Compute] Provider response could not be verified");
+    }
+
     // Parse the model's JSON response.
-    const rawText = response.content ?? "";
+    const rawText = response.choices?.[0]?.message?.content ?? "";
     let decision: AgentDecision;
 
     try {
@@ -217,20 +252,34 @@ export class ZeroGComputeClient {
     // Extract TEE attestation from response metadata.
     // The 0G broker attaches attestation in response.teeAttestation or
     // response.metadata depending on SDK version. Handle both.
-    const attestationRaw =
-      // @ts-ignore — field name may vary by SDK version
-      response.teeAttestation ?? response.metadata?.teeAttestation ?? null;
+    const attestationRaw = normalizeRecord(response.teeAttestation)
+      ?? normalizeRecord(response.metadata?.teeAttestation);
+    const signatureLink = chatId
+      ? await this.broker.inference.getChatSignatureDownloadLink(
+          this.providerAddress,
+          chatId
+        )
+      : "";
 
     const teeAttestation: TeeAttestation = attestationRaw
       ? {
-          enclave_id: attestationRaw.enclaveId  ?? attestationRaw.enclave_id  ?? "",
-          model:      attestationRaw.model       ?? this.model,
-          input_hash: attestationRaw.inputHash   ?? attestationRaw.input_hash  ?? "",
-          signature:  attestationRaw.signature   ?? "",
-          report:     attestationRaw.report      ?? "",
-          tee_mode:   attestationRaw.teeMode     ?? "TeeTLS",
+          enclave_id: stringField(attestationRaw, "enclaveId", "enclave_id"),
+          model:      stringField(attestationRaw, "model") || this.model,
+          input_hash: stringField(attestationRaw, "inputHash", "input_hash"),
+          signature:  stringField(attestationRaw, "signature") || signatureLink,
+          report:     stringField(attestationRaw, "report") || signatureLink,
+          tee_mode:   teeModeField(attestationRaw),
         }
-      : this._buildStubAttestation(userPrompt);
+      : {
+          enclave_id: this.providerAddress,
+          model:      this.model,
+          input_hash: ethers.keccak256(ethers.toUtf8Bytes(userPrompt)),
+          signature:  signatureLink,
+          report:     await this.broker.inference.getSignerRaDownloadLink(
+            this.providerAddress
+          ),
+          tee_mode:   "TeeTLS",
+        };
 
     // rawResponse is the full response JSON — this gets hashed for on-chain
     // commitment and for the watchtower integrity check.
@@ -251,24 +300,28 @@ export class ZeroGComputeClient {
     };
   }
 
-  // ── stub attestation (testnet fallback) ─────────────────────────────────────
+}
 
-  /**
-   * Builds a clearly-marked stub attestation for testnet environments
-   * where the full TDX report may not be available.
-   * The stub is structurally identical — the watchtower can still verify
-   * the hash integrity chain even without a real TDX report.
-   */
-  private _buildStubAttestation(inputPrompt: string): TeeAttestation {
-    return {
-      enclave_id: "0xSTUB_ENCLAVE_TESTNET",
-      model:      this.model,
-      input_hash: ethers.keccak256(ethers.toUtf8Bytes(inputPrompt)),
-      signature:  "0xSTUB_SIGNATURE_TESTNET",
-      report:     Buffer.from("STUB_TDX_REPORT_TESTNET").toString("base64"),
-      tee_mode:   "TeeTLS",
-    };
+function normalizeRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringField(
+  record: Record<string, unknown>,
+  ...keys: string[]
+): string {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string") return value;
   }
+  return "";
+}
+
+function teeModeField(record: Record<string, unknown>): "TeeML" | "TeeTLS" {
+  const value = stringField(record, "teeMode", "tee_mode");
+  return value === "TeeML" ? "TeeML" : "TeeTLS";
 }
 
 // ─────────────────────────────── factory ─────────────────────────────────────

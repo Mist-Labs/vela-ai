@@ -157,8 +157,9 @@ contract VelaHook is IHooks {
 
         uint256 absAmount =
             params.amountSpecified < 0 ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
+        bool amountIsCurrency0 = params.amountSpecified < 0 ? params.zeroForOne : !params.zeroForOne;
 
-        uint256 swapValueUsdc = _sqrtPriceToUsdc(sqrtPriceX96, absAmount);
+        uint256 swapValueUsdc = amountIsCurrency0 ? _sqrtPriceToUsdc(sqrtPriceX96, absAmount) : absAmount;
 
         PolicyRegistry.TierConfig memory cfg = registry.getTierConfig(uint8(policy.tier));
 

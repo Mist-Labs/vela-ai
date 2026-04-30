@@ -1,0 +1,23 @@
+{
+  "name": "@vela/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/agent.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/agent.js",
+    "dev": "tsx src/agent.ts"
+  },
+  "dependencies": {
+    "@0gfoundation/0g-ts-sdk": "1.2.7",
+    "@0glabs/0g-serving-broker": "0.7.5",
+    "dotenv": "^16.4.7",
+    "ethers": "6.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.3"
+  }
+}

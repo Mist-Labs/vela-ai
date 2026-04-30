@@ -4,9 +4,16 @@ pragma solidity ^0.8.24;
 import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 import {FullMath} from "v4-core/libraries/FullMath.sol";
-import {PoolId} from "v4-core/types/PoolId.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
+import {Currency} from "v4-core/types/Currency.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {SwapParams} from "v4-core/types/PoolOperation.sol";
 import {PolicyRegistry} from "./PolicyRegistry.sol";
 
 interface IV4StateView {
@@ -21,7 +28,10 @@ interface IV4StateView {
 ///         Stores an append-only feed of agent decisions with attestation state.
 ///         Circuit breaker from PolicyRegistry blocks deposits and transfers;
 ///         withdrawals (burns) are always permitted so users can always exit.
-contract VelaVault is ERC4626, ReentrancyGuard {
+contract VelaVault is ERC4626, ReentrancyGuard, IUnlockCallback {
+    using SafeERC20 for IERC20;
+    using PoolIdLibrary for PoolKey;
+
     // ─── Errors ───────────────────────────────────────────────────────────────
 
     error OnlyAgent(address caller);
@@ -34,6 +44,12 @@ contract VelaVault is ERC4626, ReentrancyGuard {
     error ZeroAddress(string field);
     error InvalidPosition();
     error PositionNotFound(uint256 index);
+    error OnlyPoolManager(address caller);
+    error HookNotConfigured();
+    error UntrustedHook(address hook);
+    error NativeCurrencyUnsupported();
+    error ExactInputOnly();
+    error InsufficientSwapOutput(uint256 received, uint256 minimum);
 
     // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -59,13 +75,23 @@ contract VelaVault is ERC4626, ReentrancyGuard {
         uint256 balance; // last synced token balance; NAV reads live balances for safety.
     }
 
+    struct HookSwapParams {
+        PoolKey key;
+        bool zeroForOne;
+        uint256 amountIn;
+        uint256 minAmountOut;
+        uint160 sqrtPriceLimitX96;
+    }
+
     // ─── State ────────────────────────────────────────────────────────────────
 
     PolicyRegistry public immutable registry;
     address public immutable agent;
     address public immutable attestationContract;
     address public immutable owner;
+    IPoolManager public immutable poolManager;
     IV4StateView public immutable poolStateView;
+    address public trustedHook;
 
     uint256 public totalDecisions;
     mapping(uint256 => DecisionRecord) private _decisions;
@@ -80,6 +106,10 @@ contract VelaVault is ERC4626, ReentrancyGuard {
         uint256 indexed index, PoolId indexed poolId, address indexed token, bool tokenIsCurrency0, uint256 balance
     );
     event PositionSynced(uint256 indexed index, address indexed token, uint256 balance);
+    event TrustedHookUpdated(address indexed hook);
+    event HookSwapExecuted(
+        PoolId indexed poolId, address indexed agent, bool zeroForOne, uint256 amountIn, uint256 amountOut, address hook
+    );
 
     // ─── Constructor ──────────────────────────────────────────────────────────
 
@@ -87,20 +117,27 @@ contract VelaVault is ERC4626, ReentrancyGuard {
     /// @param agent_              Hot wallet / contract that executes decisions.
     /// @param registry_           Deployed PolicyRegistry.
     /// @param attestationContract_ Deployed AttestationContract (can attest decisions).
+    /// @param poolManager_        Uniswap v4 PoolManager used for all vault swaps.
     /// @param poolStateView_       Official Uniswap v4 StateView reader for pool slot0.
-    constructor(IERC20 asset_, address agent_, address registry_, address attestationContract_, address poolStateView_)
-        ERC4626(asset_)
-        ERC20("Vela Vault Share", "vlSHARE")
-    {
+    constructor(
+        IERC20 asset_,
+        address agent_,
+        address registry_,
+        address attestationContract_,
+        address poolManager_,
+        address poolStateView_
+    ) ERC4626(asset_) ERC20("Vela Vault Share", "vlSHARE") {
         if (agent_ == address(0)) revert ZeroAddress("agent");
         if (registry_ == address(0)) revert ZeroAddress("registry");
         if (attestationContract_ == address(0)) revert ZeroAddress("attestation");
+        if (poolManager_ == address(0)) revert ZeroAddress("poolManager");
         if (poolStateView_ == address(0)) revert ZeroAddress("poolStateView");
 
         owner = msg.sender;
         agent = agent_;
         registry = PolicyRegistry(registry_);
         attestationContract = attestationContract_;
+        poolManager = IPoolManager(poolManager_);
         poolStateView = IV4StateView(poolStateView_);
     }
 
@@ -185,6 +222,59 @@ contract VelaVault is ERC4626, ReentrancyGuard {
         position.balance = balance;
 
         emit PositionSynced(index, position.token, balance);
+    }
+
+    // ─── Hook-Enforced Trading ───────────────────────────────────────────────
+
+    function setTrustedHook(address hook) external {
+        if (msg.sender != owner) revert OnlyOwner(msg.sender);
+        if (hook == address(0)) revert ZeroAddress("hook");
+        trustedHook = hook;
+        emit TrustedHookUpdated(hook);
+    }
+
+    /// @notice Execute an exact-input Uniswap v4 swap through the configured VelaHook only.
+    /// @dev Fails closed if the hook is unset or the PoolKey does not target the trusted hook.
+    function executeHookSwap(HookSwapParams calldata params) external nonReentrant returns (uint256 amountOut) {
+        if (msg.sender != agent) revert OnlyAgent(msg.sender);
+        if (registry.circuitBreakerTriggered(agent)) revert CircuitBreakerActive(agent);
+        if (trustedHook == address(0)) revert HookNotConfigured();
+        if (address(params.key.hooks) != trustedHook) revert UntrustedHook(address(params.key.hooks));
+        if (Currency.unwrap(params.key.currency0) == address(0) || Currency.unwrap(params.key.currency1) == address(0))
+        {
+            revert NativeCurrencyUnsupported();
+        }
+        if (params.amountIn == 0) revert ExactInputOnly();
+
+        amountOut = abi.decode(poolManager.unlock(abi.encode(params)), (uint256));
+        emit HookSwapExecuted(
+            params.key.toId(), agent, params.zeroForOne, params.amountIn, amountOut, address(params.key.hooks)
+        );
+    }
+
+    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+        if (msg.sender != address(poolManager)) revert OnlyPoolManager(msg.sender);
+
+        HookSwapParams memory params = abi.decode(data, (HookSwapParams));
+        BalanceDelta delta = poolManager.swap(
+            params.key,
+            SwapParams({
+                zeroForOne: params.zeroForOne,
+                amountSpecified: -int256(params.amountIn),
+                sqrtPriceLimitX96: params.sqrtPriceLimitX96
+            }),
+            abi.encode(agent)
+        );
+
+        _settleIfDebt(params.key.currency0, delta.amount0());
+        _settleIfDebt(params.key.currency1, delta.amount1());
+
+        uint256 amountOut = params.zeroForOne
+            ? _takeIfCredit(params.key.currency1, delta.amount1())
+            : _takeIfCredit(params.key.currency0, delta.amount0());
+        if (amountOut < params.minAmountOut) revert InsufficientSwapOutput(amountOut, params.minAmountOut);
+
+        return abi.encode(amountOut);
     }
 
     function transfer(address to, uint256 value) public override(ERC20, IERC20) returns (bool) {
@@ -281,5 +371,19 @@ contract VelaVault is ERC4626, ReentrancyGuard {
 
         uint256 token0PerToken1 = FullMath.mulDiv(amount, 2 ** 96, sqrtPriceX96);
         return FullMath.mulDiv(token0PerToken1, 2 ** 96, sqrtPriceX96);
+    }
+
+    function _settleIfDebt(Currency currency, int128 delta) private {
+        if (delta >= 0) return;
+        uint256 amount = uint256(uint128(-delta));
+        poolManager.sync(currency);
+        IERC20(Currency.unwrap(currency)).safeTransfer(address(poolManager), amount);
+        poolManager.settle();
+    }
+
+    function _takeIfCredit(Currency currency, int128 delta) private returns (uint256 amount) {
+        if (delta <= 0) return 0;
+        amount = uint256(uint128(delta));
+        poolManager.take(currency, address(this), amount);
     }
 }

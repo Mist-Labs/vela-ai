@@ -99,7 +99,7 @@ export class ZeroGStorageClient {
     const [, uploadErr] = await this.indexer.upload(
       memData,
       this.zgRpcUrl,
-      this.signer
+      this.signer as never
     );
 
     if (uploadErr !== null) {
