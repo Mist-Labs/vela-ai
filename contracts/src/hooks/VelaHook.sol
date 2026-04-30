@@ -49,6 +49,7 @@ contract VelaHook is IHooks {
     error PoolNotAllowed(bytes32 poolId);
     error NoHookData();
     error ZeroAddress();
+    error UntrustedExecutor(address agent, address sender, address expected);
 
     // ─── Constants ────────────────────────────────────────────────────────────
 
@@ -71,9 +72,14 @@ contract VelaHook is IHooks {
     ///         Populated by the agent's operator at registration time.
     mapping(address => mapping(bytes32 => bool)) public allowedPools;
 
+    /// @notice Per-agent trusted v4 sender. In the Vela flow this is the
+    ///         VelaVault that calls PoolManager.swap during unlockCallback.
+    mapping(address => address) public trustedExecutors;
+
     // ─── Events ───────────────────────────────────────────────────────────────
 
     event PoolAllowlistUpdated(address indexed agent, bytes32 indexed poolId, bool allowed);
+    event AgentExecutorUpdated(address indexed agent, address indexed executor);
 
     // ─── Constructor ──────────────────────────────────────────────────────────
 
@@ -121,12 +127,7 @@ contract VelaHook is IHooks {
     /// @param  key       The pool key identifying the pool being swapped in.
     /// @param  params    Swap parameters including amountSpecified.
     /// @param  hookData  ABI-encoded agent address: abi.encode(address agent).
-    function beforeSwap(
-        address, /* sender - unused */
-        PoolKey calldata key,
-        SwapParams calldata params,
-        bytes calldata hookData
-    )
+    function beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
         external
         onlyPoolManager
         returns (bytes4, BeforeSwapDelta, uint24)
@@ -140,6 +141,11 @@ contract VelaHook is IHooks {
         if (!registry.isActive(agent)) revert AgentNotActive(agent);
 
         PolicyRegistry.PolicyCommitment memory policy = registry.getPolicy(agent);
+
+        address expectedExecutor = trustedExecutors[agent];
+        if (sender != expectedExecutor) {
+            revert UntrustedExecutor(agent, sender, expectedExecutor);
+        }
 
         // ── Check 2: trade is inside the configured UTC trading window ────────
         uint8 currentHourUtc = uint8((block.timestamp / 1 hours) % 24);
@@ -245,15 +251,26 @@ contract VelaHook is IHooks {
     function setAllowedPools(address agent, bytes32[] calldata poolIds, bool[] calldata allowed) external {
         require(poolIds.length == allowed.length, "VelaHook: length mismatch");
 
-        // Only the registered operator can update their agent's allowlist
-        PolicyRegistry.PolicyCommitment memory policy = registry.getPolicy(agent);
-        require(msg.sender == policy.operator, "VelaHook: not operator");
-        require(policy.active, "VelaHook: agent not active");
+        _requireOperator(agent);
 
         for (uint256 i = 0; i < poolIds.length; i++) {
             allowedPools[agent][poolIds[i]] = allowed[i];
             emit PoolAllowlistUpdated(agent, poolIds[i], allowed[i]);
         }
+    }
+
+    /// @notice Set the only PoolManager `sender` allowed to claim this agent in hookData.
+    function setAgentExecutor(address agent, address executor) external {
+        if (executor == address(0)) revert ZeroAddress();
+        _requireOperator(agent);
+        trustedExecutors[agent] = executor;
+        emit AgentExecutorUpdated(agent, executor);
+    }
+
+    function _requireOperator(address agent) private view {
+        PolicyRegistry.PolicyCommitment memory policy = registry.getPolicy(agent);
+        require(msg.sender == policy.operator, "VelaHook: not operator");
+        require(policy.active, "VelaHook: agent not active");
     }
 
     // ─── Price Math ───────────────────────────────────────────────────────────

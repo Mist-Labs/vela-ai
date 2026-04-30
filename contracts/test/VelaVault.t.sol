@@ -73,7 +73,7 @@ contract MockSwapPoolManager {
         external
         returns (BalanceDelta)
     {
-        key.hooks.beforeSwap(address(this), key, params, hookData);
+        key.hooks.beforeSwap(msg.sender, key, params, hookData);
         uint256 amountIn =
             params.amountSpecified < 0 ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
 
@@ -367,6 +367,8 @@ contract VelaVaultTest is Test {
 
         vm.prank(agentAddr);
         hook.setAllowedPools(agentAddr, pools, allowed);
+        vm.prank(agentAddr);
+        hook.setAgentExecutor(agentAddr, address(vault));
 
         vault.setTrustedHook(address(hook));
         asset.mint(address(vault), 500e6);

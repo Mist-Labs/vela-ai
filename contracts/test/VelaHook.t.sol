@@ -42,7 +42,7 @@ contract TestableVelaHook is VelaHook {
     }
 
     /// @dev Allow tests to call beforeSwap directly without the onlyPoolManager modifier.
-    function testBeforeSwap(address, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
+    function testBeforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
         external
         view
         returns (bytes4 selector, uint256 valueUsdc)
@@ -55,6 +55,11 @@ contract TestableVelaHook is VelaHook {
         if (reg.circuitBreakerTriggered(agent)) revert CircuitBreakerActive(agent);
         if (!reg.isActive(agent)) revert AgentNotActive(agent);
         PolicyRegistry.PolicyCommitment memory policy = reg.getPolicy(agent);
+
+        address expectedExecutor = trustedExecutors[agent];
+        if (sender != expectedExecutor) {
+            revert UntrustedExecutor(agent, sender, expectedExecutor);
+        }
 
         uint8 currentHourUtc = uint8((block.timestamp / 1 hours) % 24);
         if (currentHourUtc < policy.activeHoursStartUtc || currentHourUtc >= policy.activeHoursEndUtc) {
@@ -135,6 +140,8 @@ contract VelaHookTest is Test {
         allowed[0] = true;
         vm.prank(agent);
         hook.setAllowedPools(agent, pools, allowed);
+        vm.prank(agent);
+        hook.setAgentExecutor(agent, agent);
 
         // Set sqrtPrice in mock pool manager
         poolManager.setSqrtPrice(testPoolId, SQRT_PRICE_2000);
@@ -237,6 +244,12 @@ contract VelaHookTest is Test {
         hook.testBeforeSwap(agent, testPoolKey, params, bytes(""));
     }
 
+    function test_beforeSwap_revert_untrustedExecutor() public {
+        SwapParams memory params = _swapParams(-0.1 ether);
+        vm.expectRevert(abi.encodeWithSelector(VelaHook.UntrustedExecutor.selector, agent, stranger, agent));
+        hook.testBeforeSwap(stranger, testPoolKey, params, _hookData(agent));
+    }
+
     function test_beforeSwap_standardTier_higherCeiling() public {
         // Register a STANDARD tier agent (max $10K per tx)
         address proAgent = makeAddr("proAgent");
@@ -250,6 +263,8 @@ contract VelaHookTest is Test {
         allowed[0] = true;
         vm.prank(proAgent);
         hook.setAllowedPools(proAgent, pools, allowed);
+        vm.prank(proAgent);
+        hook.setAgentExecutor(proAgent, proAgent);
 
         // 4 ETH at $2000 = ~$8000 USDC - within $10K STANDARD ceiling
         SwapParams memory params = _swapParams(-4 ether);
@@ -340,6 +355,29 @@ contract VelaHookTest is Test {
         for (uint256 i = 0; i < 3; i++) {
             assertTrue(hook.isPoolAllowed(agent, pools[i]));
         }
+    }
+
+    function test_setAgentExecutor_operatorCanUpdate() public {
+        address executor = makeAddr("vault");
+
+        vm.expectEmit(true, true, false, true);
+        emit VelaHook.AgentExecutorUpdated(agent, executor);
+        vm.prank(agent);
+        hook.setAgentExecutor(agent, executor);
+
+        assertEq(hook.trustedExecutors(agent), executor);
+    }
+
+    function test_setAgentExecutor_revert_notOperator() public {
+        vm.prank(stranger);
+        vm.expectRevert("VelaHook: not operator");
+        hook.setAgentExecutor(agent, makeAddr("vault"));
+    }
+
+    function test_setAgentExecutor_revert_zeroExecutor() public {
+        vm.prank(agent);
+        vm.expectRevert(VelaHook.ZeroAddress.selector);
+        hook.setAgentExecutor(agent, address(0));
     }
 
     // ─── Hook permissions ─────────────────────────────────────────────────────
