@@ -25,9 +25,9 @@ interface IPolicyRegistry {
  * Trust model:
  *   1. Owner verifies the 0G enclave's Intel TDX attestation report once
  *      off-chain using DCAP, then registers the enclave public key here.
- *   2. verifyAndSettle() recovers the signer from the response JSON hash
- *      and the enclave signature. Signer must be a registered enclave key.
- *   3. contentHash must match the decisionHash committed on-chain in
+ *   2. verifyAndSettle() recovers the signer from the EIP-191 digest
+ *      of the provider-signed payload. Signer must be a registered enclave key.
+ *   3. contentHash must match the signed payload digest committed on-chain in
  *      VelaVault - proves the settled response is the committed 0G DA record.
  *   4. On any failure the watchtower calls reportFailure() which triggers
  *      the circuit breaker on PolicyRegistry instantly.
@@ -110,9 +110,9 @@ contract AttestationContract is Ownable {
      *
      * @param vault       Address of the VelaVault that committed the decision.
      * @param decisionId  ID returned by VelaVault.commitDecision().
-     * @param contentHash keccak256 of the full 0G DA response JSON
-     *                    (including tee_attestation). Must match the hash
-     *                    committed on-chain in VelaVault.
+     * @param contentHash EIP-191 digest of the exact 0G provider-signed
+     *                    payload. Must match the digest committed on-chain
+     *                    in VelaVault.
      * @param sig         65-byte ECDSA signature produced by the 0G enclave
      *                    over contentHash.
      *
@@ -127,8 +127,7 @@ contract AttestationContract is Ownable {
             revert AlreadySettled(vault, decisionId);
         }
 
-        // 1. Recover signer from the raw hash (enclave signs raw keccak256,
-        //    not the Ethereum personal_sign prefixed hash).
+        // 1. Recover signer from the EIP-191 digest of the signed payload.
         address signer = contentHash.recover(sig);
 
         if (!registeredEnclaveKeys[signer]) {

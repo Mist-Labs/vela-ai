@@ -21,12 +21,13 @@ export interface TeeAttestation {
   enclave_id:  string;
   model:       string;
   input_hash:  string;
-  signature:   string;  // enclave ECDSA signature over keccak256(response JSON)
+  signature:   string;  // provider ECDSA signature over the signed payload digest
   report:      string;  // base64-encoded Intel TDX attestation report
   tee_mode:    "TeeML" | "TeeTLS";
 }
 
 export interface DecisionRecord {
+  signed_payload: string;
   decision: {
     action:     "swap" | "hold" | "rebalance";
     value_usdc: number;
@@ -44,7 +45,7 @@ export interface DecisionRecord {
 export interface UploadResult {
   /** 0G DA root hash — use as CID in commitDecision() */
   rootHash:    string;
-  /** keccak256 of the serialised record JSON — committed on-chain */
+  /** EIP-191 digest of the exact provider-signed payload — committed on-chain */
   contentHash: string;
 }
 
@@ -80,9 +81,8 @@ export class ZeroGStorageClient {
     const json    = JSON.stringify(record, null, 2);
     const encoded = new TextEncoder().encode(json);
 
-    // contentHash: keccak256 of the JSON bytes — this is what the enclave
-    // signs and what the watchtower verifies on-chain.
-    const contentHash = ethers.keccak256(ethers.toUtf8Bytes(json));
+    // contentHash: EIP-191 digest of the exact payload signed by the 0G provider.
+    const contentHash = ethers.hashMessage(record.signed_payload);
 
     const memData = new MemData(encoded);
 
@@ -133,8 +133,6 @@ export class ZeroGStorageClient {
     // Read back and parse.
     const { readFileSync } = await import("fs");
     const raw  = readFileSync(tmpPath, "utf-8");
-    const contentHash = ethers.keccak256(ethers.toUtf8Bytes(raw));
-
     let record: DecisionRecord;
     try {
       record = JSON.parse(raw) as DecisionRecord;
@@ -142,7 +140,7 @@ export class ZeroGStorageClient {
       throw new Error(`0G DA: failed to parse record JSON for ${rootHash} — ${e}`);
     }
 
-    return { record, contentHash };
+    return { record, contentHash: ethers.hashMessage(record.signed_payload) };
   }
 
   // ── verify integrity ────────────────────────────────────────────────────────

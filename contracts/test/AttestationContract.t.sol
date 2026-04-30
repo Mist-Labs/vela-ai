@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import "forge-std/Test.sol";
 import "../src/AttestationContract.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 // ─────────────────────────────── mocks ───────────────────────────────────────
 
@@ -76,13 +77,15 @@ contract AttestationContractTest is Test {
     // ── helpers ───────────────────────────────────────────────────────────────
 
     /**
-     * @dev Sign contentHash with the given private key.
-     *      The enclave signs the raw keccak256 - NOT the Ethereum
-     *      personal_sign prefixed hash.
+     * @dev Sign the EIP-191 digest of the exact 0G provider payload.
      */
     function _sign(uint256 privKey, bytes32 hash) internal pure returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privKey, hash);
         return abi.encodePacked(r, s, v);
+    }
+
+    function _payloadHash(string memory payload) internal pure returns (bytes32) {
+        return MessageHashUtils.toEthSignedMessageHash(bytes(payload));
     }
 
     function _setupDecision(bytes32 contentHash) internal {
@@ -92,7 +95,7 @@ contract AttestationContractTest is Test {
     // ── test: valid enclave signature settles successfully ────────────────────
 
     function test_verifyAndSettle_validSignature() public {
-        bytes32 contentHash = keccak256("decision-record-json-cid-42");
+        bytes32 contentHash = _payloadHash("decision-record-json-cid-42");
         _setupDecision(contentHash);
 
         bytes memory sig = _sign(ENCLAVE_PRIVKEY, contentHash);
@@ -116,7 +119,7 @@ contract AttestationContractTest is Test {
     // ── test: unregistered signer reverts ─────────────────────────────────────
 
     function test_verifyAndSettle_unregisteredSigner_reverts() public {
-        bytes32 contentHash = keccak256("decision-record-json-cid-43");
+        bytes32 contentHash = _payloadHash("decision-record-json-cid-43");
         _setupDecision(contentHash);
 
         // Sign with a key that is NOT registered.
@@ -134,8 +137,8 @@ contract AttestationContractTest is Test {
     // ── test: contentHash mismatch reverts ────────────────────────────────────
 
     function test_verifyAndSettle_hashMismatch_reverts() public {
-        bytes32 committedHash = keccak256("original-decision-record");
-        bytes32 tamperedHash = keccak256("tampered-decision-record");
+        bytes32 committedHash = _payloadHash("original-decision-record");
+        bytes32 tamperedHash = _payloadHash("tampered-decision-record");
 
         // Vault stores the original hash.
         _setupDecision(committedHash);
@@ -153,7 +156,7 @@ contract AttestationContractTest is Test {
     // ── test: cannot settle the same decision twice ───────────────────────────
 
     function test_verifyAndSettle_alreadySettled_reverts() public {
-        bytes32 contentHash = keccak256("decision-record-json-cid-44");
+        bytes32 contentHash = _payloadHash("decision-record-json-cid-44");
         _setupDecision(contentHash);
         bytes memory sig = _sign(ENCLAVE_PRIVKEY, contentHash);
 
@@ -246,7 +249,7 @@ contract AttestationContractTest is Test {
     // ── test: revoked key can no longer settle ────────────────────────────────
 
     function test_revokedKey_cannotSettle() public {
-        bytes32 contentHash = keccak256("decision-record-json-cid-45");
+        bytes32 contentHash = _payloadHash("decision-record-json-cid-45");
         _setupDecision(contentHash);
         bytes memory sig = _sign(ENCLAVE_PRIVKEY, contentHash);
 

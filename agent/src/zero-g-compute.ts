@@ -52,7 +52,7 @@ export interface AgentDecision {
 export interface SealedInferenceResponse {
   decision:       AgentDecision;
   teeAttestation: TeeAttestation;
-  rawResponse:    string;   // full JSON string — hashed for on-chain commitment
+  rawResponse:    string;   // exact provider-signed model payload
   model:          string;
   providerAddress: string;
 }
@@ -260,13 +260,14 @@ export class ZeroGComputeClient {
           chatId
         )
       : "";
+    const fetchedSignature = await fetchSignature(signatureLink);
 
     const teeAttestation: TeeAttestation = attestationRaw
       ? {
           enclave_id: stringField(attestationRaw, "enclaveId", "enclave_id"),
           model:      stringField(attestationRaw, "model") || this.model,
           input_hash: stringField(attestationRaw, "inputHash", "input_hash"),
-          signature:  stringField(attestationRaw, "signature") || signatureLink,
+          signature:  stringField(attestationRaw, "signature") || fetchedSignature,
           report:     stringField(attestationRaw, "report") || signatureLink,
           tee_mode:   teeModeField(attestationRaw),
         }
@@ -274,22 +275,18 @@ export class ZeroGComputeClient {
           enclave_id: this.providerAddress,
           model:      this.model,
           input_hash: ethers.keccak256(ethers.toUtf8Bytes(userPrompt)),
-          signature:  signatureLink,
+          signature:  fetchedSignature,
           report:     await this.broker.inference.getSignerRaDownloadLink(
             this.providerAddress
           ),
           tee_mode:   "TeeTLS",
         };
+    if (!ethers.isHexString(teeAttestation.signature, 65)) {
+      throw new Error("[0G Compute] Missing 65-byte provider signature for signed payload");
+    }
 
-    // rawResponse is the full response JSON — this gets hashed for on-chain
-    // commitment and for the watchtower integrity check.
-    const rawResponse = JSON.stringify({
-      decision,
-      tee_attestation: teeAttestation,
-      model:           this.model,
-      provider:        this.providerAddress,
-      timestamp:       Math.floor(Date.now() / 1000),
-    });
+    // rawResponse is the exact model payload covered by the 0G chat signature.
+    const rawResponse = rawText;
 
     return {
       decision,
@@ -322,6 +319,25 @@ function stringField(
 function teeModeField(record: Record<string, unknown>): "TeeML" | "TeeTLS" {
   const value = stringField(record, "teeMode", "tee_mode");
   return value === "TeeML" ? "TeeML" : "TeeTLS";
+}
+
+async function fetchSignature(signatureLink: string): Promise<string> {
+  if (!signatureLink) return "";
+  if (ethers.isHexString(signatureLink, 65)) return signatureLink;
+
+  const response = await fetch(signatureLink);
+  if (!response.ok) {
+    throw new Error(`[0G Compute] Failed to fetch response signature: ${response.status}`);
+  }
+
+  const text = (await response.text()).trim();
+  try {
+    const parsed = JSON.parse(text) as { signature?: unknown };
+    if (typeof parsed.signature === "string") return parsed.signature;
+  } catch {
+    // Plain text signatures are accepted below.
+  }
+  return text;
 }
 
 // ─────────────────────────────── factory ─────────────────────────────────────

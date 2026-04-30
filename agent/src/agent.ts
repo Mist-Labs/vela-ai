@@ -290,6 +290,7 @@ export class VelaAgent {
     // 4. Build and upload decision record to 0G DA.
     console.log("[Agent] [4/6] Uploading decision record to 0G DA…");
     const record: DecisionRecord = {
+      signed_payload: inferenceResult.rawResponse,
       decision:  inferenceResult.decision,
       policy_root: constraints.policyRoot,
       constraints_evaluated: {

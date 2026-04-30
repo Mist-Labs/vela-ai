@@ -1,11 +1,12 @@
 use anyhow::{anyhow, bail, Context, Result};
 use ethers::types::{Address, RecoveryMessage, Signature, H256};
-use ethers::utils::keccak256;
+use ethers::utils::hash_message;
 use serde::Deserialize;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct DecisionEvidence {
+    pub signed_payload: String,
     pub tee_attestation: Option<TeeAttestation>,
 }
 
@@ -81,13 +82,13 @@ pub fn verify_evidence(
     committed_hash: H256,
     registered_enclave: Address,
 ) -> Result<VerificationOutcome> {
-    let content_hash = H256::from(keccak256(raw));
+    let evidence: DecisionEvidence =
+        serde_json::from_slice(raw).context("decision evidence is not valid JSON")?;
+    let content_hash = hash_message(&evidence.signed_payload);
     if content_hash != committed_hash {
         bail!("content hash mismatch: committed {committed_hash:?}, fetched {content_hash:?}");
     }
 
-    let evidence: DecisionEvidence =
-        serde_json::from_slice(raw).context("decision evidence is not valid JSON")?;
     let attestation = evidence
         .tee_attestation
         .ok_or_else(|| anyhow!("TEE attestation missing"))?;
@@ -119,8 +120,8 @@ mod tests {
             "0x59c6995e998f97a5a0044966f094538c5c45dae6d8ae152d75d3988b1fc45e59"
                 .parse()
                 .unwrap();
-        let raw = br#"{"decision":{"action":"hold"}}"#;
-        let hash = H256::from(keccak256(raw));
+        let raw = r#"{"action":"hold","value_usdc":0,"pool":"","reason":"No trade"}"#;
+        let hash = hash_message(raw);
         let sig = wallet.sign_hash(hash).unwrap();
 
         let recovered = sig.recover(RecoveryMessage::Hash(hash)).unwrap();
@@ -129,8 +130,8 @@ mod tests {
 
     #[test]
     fn rejects_missing_attestation() {
-        let raw = br#"{"decision":{"action":"hold"}}"#;
-        let hash = H256::from(keccak256(raw));
+        let raw = br#"{"signed_payload":"{\"action\":\"hold\"}"}"#;
+        let hash = hash_message(r#"{"action":"hold"}"#);
         let err = verify_evidence(raw, hash, Address::zero()).unwrap_err();
         assert!(err.to_string().contains("TEE attestation missing"));
     }
