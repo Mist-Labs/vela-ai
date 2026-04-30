@@ -26,6 +26,8 @@ contract Deploy is Script {
 
     // Base Sepolia USDC (Circle's testnet deployment)
     address constant USDC_BASE_SEPOLIA = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
+    // Base Sepolia Uniswap v4 StateView lens.
+    address constant STATE_VIEW_BASE_SEPOLIA = 0x571291b572ed32ce6751a2Cb2486EbEe8DEfB9B4;
 
     // ── Run ───────────────────────────────────────────────────────────────────
 
@@ -36,12 +38,14 @@ contract Deploy is Script {
         address vaultAsset = vm.envOr("VAULT_ASSET_ADDRESS", USDC_BASE_SEPOLIA);
         address agentAddr = vm.envOr("AGENT_ADDRESS", deployer);
         address enclaveKey = vm.envOr("REGISTERED_ENCLAVE_KEY", address(0));
+        address stateView = vm.envOr("STATE_VIEW_ADDRESS", STATE_VIEW_BASE_SEPOLIA);
 
         console2.log("=== Vela Deploy ===");
         console2.log("Deployer:     ", deployer);
         console2.log("Vault asset:  ", vaultAsset);
         console2.log("Agent:        ", agentAddr);
         console2.log("Enclave key:  ", enclaveKey);
+        console2.log("StateView:    ", stateView);
         console2.log("");
 
         vm.startBroadcast(deployerKey);
@@ -55,8 +59,9 @@ contract Deploy is Script {
         console2.log("AttestationContract deployed:", address(attestationContract));
 
         // 3. VelaVault (single-vault MVP)
-        VelaVault velaVault =
-            new VelaVault(IERC20(vaultAsset), agentAddr, address(policyRegistry), address(attestationContract));
+        VelaVault velaVault = new VelaVault(
+            IERC20(vaultAsset), agentAddr, address(policyRegistry), address(attestationContract), stateView
+        );
         console2.log("VelaVault deployed:", address(velaVault));
 
         // 4. Wire contracts
@@ -79,6 +84,7 @@ contract Deploy is Script {
         console2.log("POLICY_REGISTRY_ADDRESS=", address(policyRegistry));
         console2.log("VELA_VAULT_ADDRESS=", address(velaVault));
         console2.log("ATTESTATION_CONTRACT_ADDRESS=", address(attestationContract));
+        console2.log("STATE_VIEW_ADDRESS=", stateView);
         console2.log("");
         console2.log("VelaHook not deployed here. Run HookMiner.s.sol next.");
     }

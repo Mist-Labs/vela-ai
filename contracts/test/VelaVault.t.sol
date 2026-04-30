@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
 import {VelaVault} from "../src/VelaVault.sol";
 import {PolicyRegistry} from "../src/PolicyRegistry.sol";
 
@@ -19,8 +20,34 @@ contract MockERC20 is ERC20 {
     }
 }
 
+contract MockPositionToken is ERC20 {
+    constructor() ERC20("Mock WETH", "mWETH") {}
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+}
+
+contract MockStateView {
+    mapping(bytes32 => uint160) public sqrtPrices;
+
+    function setSqrtPrice(PoolId poolId, uint160 sqrtPriceX96) external {
+        sqrtPrices[PoolId.unwrap(poolId)] = sqrtPriceX96;
+    }
+
+    function getSlot0(PoolId poolId)
+        external
+        view
+        returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)
+    {
+        return (sqrtPrices[PoolId.unwrap(poolId)], 0, 0, 0);
+    }
+}
+
 contract VelaVaultTest is Test {
     MockERC20 public asset;
+    MockPositionToken public positionToken;
+    MockStateView public stateView;
     PolicyRegistry public registry;
     VelaVault public vault;
 
@@ -35,12 +62,17 @@ contract VelaVaultTest is Test {
     bytes32 constant DECISION_HASH = keccak256("decision-0");
     string constant EXPLANATION = "Swap 1000 USDC for WETH - yield opportunity detected";
     string constant EVIDENCE_CID = "0g://evidence-cid-abc123";
+    PoolId constant ETH_USDC_POOL_ID = PoolId.wrap(bytes32(uint256(1)));
+    uint160 constant SQRT_PRICE_2000_USDC_PER_ETH = 3_543_191_142_285_914_205_922_034;
 
     function setUp() public {
         asset = new MockERC20();
+        positionToken = new MockPositionToken();
+        stateView = new MockStateView();
         registry = new PolicyRegistry(owner);
 
-        vault = new VelaVault(asset, agentAddr, address(registry), attestation);
+        vault = new VelaVault(asset, agentAddr, address(registry), attestation, address(stateView));
+        stateView.setSqrtPrice(ETH_USDC_POOL_ID, SQRT_PRICE_2000_USDC_PER_ETH);
 
         vm.prank(owner);
         registry.setContracts(attestation);
@@ -196,6 +228,68 @@ contract VelaVaultTest is Test {
         assertEq(withdrawn, amount);
         assertEq(vault.balanceOf(user1), 0);
         assertEq(asset.balanceOf(user1), 10_000e6);
+    }
+
+    // ─── Multi-Asset NAV ─────────────────────────────────────────────────────
+
+    function test_addPosition_byOwner() public {
+        uint256 index = vault.addPosition(ETH_USDC_POOL_ID, address(positionToken), true);
+
+        assertEq(index, 0);
+        assertEq(vault.positionCount(), 1);
+
+        VelaVault.PoolPosition memory position = vault.getPosition(0);
+        assertEq(PoolId.unwrap(position.poolId), PoolId.unwrap(ETH_USDC_POOL_ID));
+        assertEq(position.token, address(positionToken));
+        assertTrue(position.tokenIsCurrency0);
+        assertTrue(position.active);
+        assertEq(position.balance, 0);
+    }
+
+    function test_addPosition_revert_notOwner() public {
+        vm.prank(stranger);
+        vm.expectRevert(abi.encodeWithSelector(VelaVault.OnlyOwner.selector, stranger));
+        vault.addPosition(ETH_USDC_POOL_ID, address(positionToken), true);
+    }
+
+    function test_addPosition_revert_vaultAssetWouldDoubleCount() public {
+        vm.expectRevert(VelaVault.InvalidPosition.selector);
+        vault.addPosition(ETH_USDC_POOL_ID, address(asset), true);
+    }
+
+    function test_addPosition_revert_uninitializedPool() public {
+        PoolId uninitializedPool = PoolId.wrap(bytes32(uint256(2)));
+
+        vm.expectRevert(VelaVault.InvalidPosition.selector);
+        vault.addPosition(uninitializedPool, address(positionToken), true);
+    }
+
+    function test_totalAssets_includesConfiguredPositionValue() public {
+        asset.mint(address(vault), 1_000e6);
+        positionToken.mint(address(vault), 1 ether);
+
+        vault.addPosition(ETH_USDC_POOL_ID, address(positionToken), true);
+
+        assertApproxEqAbs(vault.totalAssets(), 3_000e6, 2);
+    }
+
+    function test_totalAssets_usesLivePositionBalanceBeforeSync() public {
+        vault.addPosition(ETH_USDC_POOL_ID, address(positionToken), true);
+        positionToken.mint(address(vault), 1 ether);
+
+        VelaVault.PoolPosition memory position = vault.getPosition(0);
+        assertEq(position.balance, 0);
+        assertApproxEqAbs(vault.totalAssets(), 2_000e6, 2);
+    }
+
+    function test_syncPositionBalance_updatesSnapshot() public {
+        vault.addPosition(ETH_USDC_POOL_ID, address(positionToken), true);
+        positionToken.mint(address(vault), 2 ether);
+
+        uint256 balance = vault.syncPositionBalance(0);
+
+        assertEq(balance, 2 ether);
+        assertEq(vault.getPosition(0).balance, 2 ether);
     }
 
     // ─── Circuit Breaker: ERC-20 Transfer Blocking ────────────────────────────

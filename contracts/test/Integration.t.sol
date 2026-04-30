@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
 import {PolicyRegistry} from "../src/PolicyRegistry.sol";
 import {VelaVault} from "../src/VelaVault.sol";
 import {AttestationContract} from "../src/AttestationContract.sol";
@@ -19,6 +20,16 @@ contract MockERC20 is ERC20 {
     }
 }
 
+contract MockStateView {
+    function getSlot0(PoolId)
+        external
+        pure
+        returns (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee)
+    {
+        return (0, 0, 0, 0);
+    }
+}
+
 /// @title  IntegrationTest
 /// @notice Exercises the real-time Vela attestation and watchtower pause paths.
 contract IntegrationTest is Test {
@@ -26,6 +37,7 @@ contract IntegrationTest is Test {
     PolicyRegistry registry;
     VelaVault vault;
     AttestationContract attestation;
+    MockStateView stateView;
 
     uint256 internal constant ENCLAVE_PRIVKEY = 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80;
     address internal enclaveKey;
@@ -42,7 +54,8 @@ contract IntegrationTest is Test {
         asset = new MockERC20();
         registry = new PolicyRegistry(owner);
         attestation = new AttestationContract(address(registry));
-        vault = new VelaVault(asset, agent, address(registry), address(attestation));
+        stateView = new MockStateView();
+        vault = new VelaVault(asset, agent, address(registry), address(attestation), address(stateView));
 
         enclaveKey = vm.addr(ENCLAVE_PRIVKEY);
         attestation.registerEnclaveKey(enclaveKey);
