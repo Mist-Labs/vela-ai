@@ -10,7 +10,7 @@
  * What the demo shows:
  *   1. Agent builds a decision record with an inflated value.
  *   2. Record is uploaded to 0G DA and committed on-chain.
- *   3. executeTrade() is called — Hook reads spot price from pool state,
+ *   3. VelaVault.executeHookSwap() is called — Hook reads spot price from pool state,
  *      computes swap value in USDC, and reverts ValueExceedsPolicy.
  *   4. Dashboard shows attempted violation blocked. No funds moved.
  *
@@ -41,12 +41,12 @@ const AGENT_ADDRESS = process.env.TAMPER_AGENT  ?? process.env.AGENT_ADDRESS    
 const PRIVATE_KEY   = process.env.PRIVATE_KEY   ?? "";
 
 // Pool addresses for the swap attempt — must match your testnet deployment.
-const POOL_MANAGER_ADDRESS = process.env.POOL_MANAGER_ADDRESS ?? "";
 const HOOK_ADDRESS         = process.env.VELA_HOOK_ADDRESS    ?? "";
-
-// Token addresses on Base Sepolia.
-const WETH_ADDRESS = process.env.WETH_ADDRESS ?? "0x4200000000000000000000000000000000000006";
-const USDC_ADDRESS = process.env.USDC_ADDRESS ?? "";
+const CURRENCY0           = process.env.ACTIVE_POOL_CURRENCY0 ?? "";
+const CURRENCY1           = process.env.ACTIVE_POOL_CURRENCY1 ?? "";
+const POOL_FEE            = Number(process.env.ACTIVE_POOL_FEE ?? "3000");
+const TICK_SPACING        = Number(process.env.ACTIVE_POOL_TICK_SPACING ?? "60");
+const ZERO_FOR_ONE        = (process.env.ACTIVE_POOL_ZERO_FOR_ONE ?? "false").toLowerCase() === "true";
 
 if (!VAULT_ADDRESS || !AGENT_ADDRESS || !PRIVATE_KEY) {
   console.error(
@@ -59,32 +59,15 @@ if (!VAULT_ADDRESS || !AGENT_ADDRESS || !PRIVATE_KEY) {
 
 const VAULT_ABI = [
   "function commitDecision(bytes32 decisionHash, string calldata explanation, string calldata evidenceCID) external returns (uint256)",
+  "function executeHookSwap((tuple(address currency0,address currency1,uint24 fee,int24 tickSpacing,address hooks) key,bool zeroForOne,uint256 amountIn,uint256 minAmountOut,uint160 sqrtPriceLimitX96) params) external returns (uint256 amountOut)",
   "event DecisionCommitted(uint256 indexed id, bytes32 decisionHash, string explanation, string evidenceCID)",
-];
-
-// Minimal IPoolManager swap interface — matches Uniswap v4 PoolManager.
-const POOL_MANAGER_ABI = [
-  `function swap(
-    tuple(
-      address currency0,
-      address currency1,
-      uint24  fee,
-      int24   tickSpacing,
-      address hooks
-    ) key,
-    tuple(
-      bool    zeroForOne,
-      int256  amountSpecified,
-      uint160 sqrtPriceLimitX96
-    ) params,
-    bytes calldata hookData
-  ) external returns (int256 delta0, int256 delta1)`,
 ];
 
 // ─────────────────────────────── helpers ─────────────────────────────────────
 
 /** Policy ceiling for STANDARD tier: $10,000 USDC (6 decimals). */
 const POLICY_MAX_VALUE_USDC = 10_000n * 1_000_000n;
+const VALUE_EXCEEDS_POLICY_SELECTOR = ethers.id("ValueExceedsPolicy(uint256,uint256)").slice(0, 10);
 
 /**
  * Build a decision record where value_usdc intentionally exceeds the
@@ -96,8 +79,15 @@ function buildViolatingRecord(agentAddress: string): {
 } {
   // 50,000 USDC — 5× the STANDARD tier ceiling of $10,000.
   const swapAmountUsdc = 50_000n * 1_000_000n;
+  const signedPayload = JSON.stringify({
+    action:     "swap",
+    value_usdc: Number(swapAmountUsdc / 1_000_000n),
+    pool:       "ETH/USDC v4",
+    reason:     "VIOLATION: swap value intentionally exceeds policy ceiling for demo",
+  });
 
   const record = {
+    signed_payload: signedPayload,
     decision: {
       action:     "swap",
       value_usdc: Number(swapAmountUsdc / 1_000_000n),
@@ -125,7 +115,9 @@ function buildViolatingRecord(agentAddress: string): {
 }
 
 function hashRecord(record: object): string {
-  return ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(record)));
+  const signedPayload = (record as { signed_payload?: string }).signed_payload;
+  if (!signedPayload) throw new Error("record missing signed_payload");
+  return ethers.hashMessage(signedPayload);
 }
 
 async function uploadToZeroG(
@@ -149,62 +141,41 @@ async function uploadToZeroG(
 }
 
 /**
- * Attempt the violating swap through the Uniswap v4 PoolManager.
+ * Attempt the violating swap through VelaVault.executeHookSwap.
  * Expected to revert with ValueExceedsPolicy from VelaHook.beforeSwap().
- *
- * hookData encodes the agent address so the Hook can look up its policy.
  */
 async function attemptViolatingSwap(
-  poolManager: ethers.Contract,
-  agentAddress: string,
+  vault: ethers.Contract,
   swapAmountUsdc: bigint
 ): Promise<{ blocked: boolean; revertReason: string }> {
-  if (!POOL_MANAGER_ADDRESS || !HOOK_ADDRESS || !USDC_ADDRESS) {
+  if (!HOOK_ADDRESS || !CURRENCY0 || !CURRENCY1) {
     console.log(
-      "   ⚠  POOL_MANAGER_ADDRESS / VELA_HOOK_ADDRESS / USDC_ADDRESS not set."
+      "   ⚠  VELA_HOOK_ADDRESS / ACTIVE_POOL_CURRENCY0 / ACTIVE_POOL_CURRENCY1 not set."
     );
     console.log("      Skipping on-chain swap attempt. Hook block not confirmed.");
     return { blocked: false, revertReason: "env vars missing" };
   }
 
-  // Encode agent address as hookData — matches VelaHook.beforeSwap() decode.
-  const hookData = ethers.AbiCoder.defaultAbiCoder().encode(
-    ["address"],
-    [agentAddress]
-  );
-
-  // PoolKey for ETH/USDC v4 pool with VelaHook attached.
-  // currency0 < currency1 by address order (Uniswap v4 invariant).
-  const currency0 =
-    WETH_ADDRESS.toLowerCase() < USDC_ADDRESS.toLowerCase()
-      ? WETH_ADDRESS
-      : USDC_ADDRESS;
-  const currency1 =
-    WETH_ADDRESS.toLowerCase() < USDC_ADDRESS.toLowerCase()
-      ? USDC_ADDRESS
-      : WETH_ADDRESS;
-
   const poolKey = {
-    currency0,
-    currency1,
-    fee:         3000,
-    tickSpacing: 60,
+    currency0:   ethers.getAddress(CURRENCY0),
+    currency1:   ethers.getAddress(CURRENCY1),
+    fee:         POOL_FEE,
+    tickSpacing: TICK_SPACING,
     hooks:       HOOK_ADDRESS,
   };
 
-  // Swap params: sell USDC for ETH (zeroForOne depends on token order).
-  const zeroForOne = currency0 === USDC_ADDRESS;
-  const swapParams = {
-    zeroForOne,
-    amountSpecified: swapAmountUsdc,
-    // Min/max sqrt price limit — standard values for a full swap.
-    sqrtPriceLimitX96: zeroForOne
-      ? BigInt("4295128749")                         // MIN_SQRT_RATIO + 1
-      : BigInt("1461446703485210103287273052203988822378723970341"), // MAX_SQRT_RATIO - 1
+  const params = {
+    key: poolKey,
+    zeroForOne: ZERO_FOR_ONE,
+    amountIn: swapAmountUsdc,
+    minAmountOut: 0n,
+    sqrtPriceLimitX96: ZERO_FOR_ONE
+      ? 4_295_128_739n
+      : 1_461_446_703_485_210_103_287_273_052_203_988_822_378_723_970_341n,
   };
 
   try {
-    await poolManager.swap.staticCall(poolKey, swapParams, hookData);
+    await vault.executeHookSwap.staticCall(params);
     // If staticCall succeeds, the Hook did NOT block — unexpected.
     return { blocked: false, revertReason: "swap succeeded unexpectedly" };
   } catch (err: unknown) {
@@ -213,7 +184,7 @@ async function attemptViolatingSwap(
 
     const isValueError =
       message.includes("ValueExceedsPolicy") ||
-      message.includes("0x") // custom error selector
+      message.includes(VALUE_EXCEEDS_POLICY_SELECTOR);
 
     return {
       blocked:      isValueError || message.includes("revert"),
@@ -234,10 +205,6 @@ async function main() {
   const signer      = new ethers.Wallet(PRIVATE_KEY, evmProvider);
   const zgIndexer   = new Indexer(ZG_INDEXER);
   const vault       = new ethers.Contract(VAULT_ADDRESS, VAULT_ABI, signer);
-
-  const poolManager = POOL_MANAGER_ADDRESS
-    ? new ethers.Contract(POOL_MANAGER_ADDRESS, POOL_MANAGER_ABI, signer)
-    : null;
 
   console.log(`Operator: ${signer.address}`);
   console.log(`Vault:    ${VAULT_ADDRESS}`);
@@ -284,23 +251,14 @@ async function main() {
   console.log("\n[4/4] Attempting violating swap through Uniswap v4 Hook…");
   console.log("   Expected result: Hook reverts with ValueExceedsPolicy.");
 
-  if (!poolManager) {
-    console.log("   ⚠  PoolManager not configured — skipping swap attempt.");
-    console.log("      Set POOL_MANAGER_ADDRESS, VELA_HOOK_ADDRESS, and USDC_ADDRESS.");
-  } else {
-    const { blocked, revertReason } = await attemptViolatingSwap(
-      poolManager,
-      AGENT_ADDRESS,
-      swapAmountUsdc
-    );
+  const { blocked, revertReason } = await attemptViolatingSwap(vault, swapAmountUsdc);
 
-    if (blocked) {
-      console.log("   ✓ BLOCKED — Hook reverted as expected.");
-      console.log(`   Revert: ${revertReason.slice(0, 120)}…`);
-    } else {
-      console.log("   ✗ WARNING — swap was NOT blocked. Check Hook deployment.");
-      console.log(`   Result: ${revertReason}`);
-    }
+  if (blocked) {
+    console.log("   ✓ BLOCKED — Hook reverted as expected.");
+    console.log(`   Revert: ${revertReason.slice(0, 120)}…`);
+  } else {
+    console.log("   ✗ WARNING — swap was NOT blocked. Check Hook deployment.");
+    console.log(`   Result: ${revertReason}`);
   }
 
   // ── Summary ───────────────────────────────────────────────────────────────
