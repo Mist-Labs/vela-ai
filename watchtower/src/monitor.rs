@@ -24,7 +24,8 @@ pub fn vault(address: Address, client: Arc<WatchtowerClient>) -> Result<VelaVaul
     let abi: Abi = serde_json::from_str(
         r#"[
             {"type":"function","name":"totalDecisions","stateMutability":"view","inputs":[],"outputs":[{"type":"uint256"}]},
-            {"type":"function","name":"recentDecisions","stateMutability":"view","inputs":[{"name":"count","type":"uint256"}],"outputs":[{"name":"records","type":"tuple[]","components":[{"name":"decisionHash","type":"bytes32"},{"name":"explanation","type":"string"},{"name":"evidenceCID","type":"string"},{"name":"timestamp","type":"uint256"},{"name":"status","type":"uint8"},{"name":"attestationHash","type":"bytes32"}]}]}
+            {"type":"function","name":"recentDecisions","stateMutability":"view","inputs":[{"name":"count","type":"uint256"}],"outputs":[{"name":"records","type":"tuple[]","components":[{"name":"decisionHash","type":"bytes32"},{"name":"explanation","type":"string"},{"name":"evidenceCID","type":"string"},{"name":"timestamp","type":"uint256"},{"name":"status","type":"uint8"},{"name":"attestationHash","type":"bytes32"}]}]},
+            {"type":"function","name":"getDecision","stateMutability":"view","inputs":[{"name":"id","type":"uint256"}],"outputs":[{"type":"tuple","components":[{"name":"decisionHash","type":"bytes32"},{"name":"explanation","type":"string"},{"name":"evidenceCID","type":"string"},{"name":"timestamp","type":"uint256"},{"name":"status","type":"uint8"},{"name":"attestationHash","type":"bytes32"}]}]}
         ]"#,
     )?;
     Ok(VelaVaultContract {
@@ -32,32 +33,39 @@ pub fn vault(address: Address, client: Arc<WatchtowerClient>) -> Result<VelaVaul
     })
 }
 
-pub async fn fetch_recent_decisions(
+pub async fn fetch_pending_decisions(
     vault: &VelaVaultContract,
-    count: u64,
+    scan_limit: u64,
 ) -> Result<Vec<Decision>> {
     let total: U256 = vault
         .contract
         .method::<_, U256>("totalDecisions", ())?
         .call()
         .await?;
-    let records: Vec<DecisionTuple> = vault
-        .contract
-        .method::<_, Vec<DecisionTuple>>("recentDecisions", U256::from(count))?
-        .call()
-        .await?;
+    let mut cursor = total;
+    let mut scanned = 0u64;
+    let mut pending = Vec::new();
 
-    Ok(records
-        .into_iter()
-        .enumerate()
-        .map(
-            |(idx, (decision_hash, _, evidence_cid, timestamp, status, _))| Decision {
-                id: total - U256::from(idx + 1),
+    while cursor > U256::zero() && scanned < scan_limit {
+        cursor -= U256::one();
+        scanned += 1;
+
+        let record: DecisionTuple = vault
+            .contract
+            .method::<_, DecisionTuple>("getDecision", cursor)?
+            .call()
+            .await?;
+        let (decision_hash, _, evidence_cid, timestamp, status, _) = record;
+        if status == 0 {
+            pending.push(Decision {
+                id: cursor,
                 decision_hash: H256::from(decision_hash),
                 evidence_cid,
                 timestamp,
                 status,
-            },
-        )
-        .collect())
+            });
+        }
+    }
+
+    Ok(pending)
 }

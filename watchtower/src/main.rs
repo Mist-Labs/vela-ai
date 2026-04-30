@@ -6,7 +6,7 @@ mod pauser;
 use anyhow::{Context, Result};
 use checker::{verify_evidence, EvidenceFetcher};
 use ethers::prelude::*;
-use monitor::{fetch_recent_decisions, vault, WatchtowerClient};
+use monitor::{fetch_pending_decisions, vault, WatchtowerClient};
 use notifier::Notifier;
 use pauser::Pauser;
 use std::collections::HashSet;
@@ -23,7 +23,7 @@ struct Config {
     registered_enclave: Address,
     poll_interval: Duration,
     attestation_timeout: Duration,
-    recent_count: u64,
+    scan_limit: u64,
 }
 
 impl Config {
@@ -36,7 +36,7 @@ impl Config {
             registered_enclave: env_address("REGISTERED_ENCLAVE_KEY")?,
             poll_interval: Duration::from_secs(env_u64("POLL_INTERVAL_SECONDS", 30)?),
             attestation_timeout: Duration::from_secs(env_u64("ATTESTATION_TIMEOUT_SECONDS", 90)?),
-            recent_count: env_u64("WATCHTOWER_RECENT_COUNT", 25)?,
+            scan_limit: env_u64("WATCHTOWER_SCAN_LIMIT", 250)?,
         })
     }
 }
@@ -96,7 +96,7 @@ async fn tick(
     notifier: &Notifier,
     reported: &mut HashSet<U256>,
 ) -> Result<()> {
-    let decisions = fetch_recent_decisions(vault_contract, config.recent_count).await?;
+    let decisions = fetch_pending_decisions(vault_contract, config.scan_limit).await?;
     for decision in decisions {
         if decision.status == 1 || pauser.is_settled(decision.id).await? {
             continue;
@@ -110,12 +110,37 @@ async fn tick(
             Ok(raw) => {
                 match verify_evidence(&raw, decision.decision_hash, config.registered_enclave) {
                     Ok(outcome) => {
-                        info!(
-                            decision = %decision.id,
-                            signer = ?outcome.signer,
-                            content_hash = ?outcome.content_hash,
-                            "decision evidence verified"
-                        );
+                        match pauser
+                            .verify_and_settle(
+                                decision.id,
+                                outcome.content_hash,
+                                &outcome.signature,
+                            )
+                            .await
+                        {
+                            Ok(tx_hash) => {
+                                info!(
+                                    decision = %decision.id,
+                                    signer = ?outcome.signer,
+                                    content_hash = ?outcome.content_hash,
+                                    tx = ?tx_hash,
+                                    "decision evidence verified and settled"
+                                );
+                            }
+                            Err(err) if age < config.attestation_timeout.as_secs() => {
+                                warn!(decision = %decision.id, error = %err, "settlement failed inside timeout");
+                            }
+                            Err(err) => {
+                                report_failure(
+                                    pauser,
+                                    notifier,
+                                    reported,
+                                    decision.id,
+                                    &format!("valid evidence failed on-chain settlement: {err}"),
+                                )
+                                .await?;
+                            }
+                        }
                     }
                     Err(err) if age < config.attestation_timeout.as_secs() => {
                         warn!(decision = %decision.id, error = %err, "attestation pending inside timeout");

@@ -8,6 +8,7 @@ abigen!(
     AttestationContract,
     r#"[
         function isSettled(address vault,uint256 decisionId) view returns (bool)
+        function verifyAndSettle(address vault,uint256 decisionId,bytes32 contentHash,bytes sig)
         function reportFailure(address vault,uint256 decisionId,string reason)
     ]"#
 );
@@ -40,4 +41,23 @@ impl Pauser {
         let pending = call.send().await?;
         Ok(pending.tx_hash())
     }
+
+    pub async fn verify_and_settle(
+        &self,
+        decision_id: U256,
+        content_hash: H256,
+        signature: &str,
+    ) -> Result<TxHash> {
+        let sig = decode_hex_bytes(signature)?;
+        let call =
+            self.contract
+                .verify_and_settle(self.vault, decision_id, content_hash.into(), sig);
+        let pending = call.send().await?;
+        Ok(pending.tx_hash())
+    }
+}
+
+fn decode_hex_bytes(value: &str) -> Result<Bytes> {
+    let trimmed = value.strip_prefix("0x").unwrap_or(value);
+    Ok(Bytes::from(hex::decode(trimmed)?))
 }

@@ -26,6 +26,7 @@ pub struct EvidenceFetcher {
 pub struct VerificationOutcome {
     pub content_hash: H256,
     pub signer: Address,
+    pub signature: String,
 }
 
 impl EvidenceFetcher {
@@ -106,7 +107,17 @@ pub fn verify_evidence(
     Ok(VerificationOutcome {
         content_hash,
         signer,
+        signature: attestation.signature,
     })
+}
+
+#[cfg(test)]
+fn evidence_json(signed_payload: &str, signature: &Signature) -> String {
+    serde_json::json!({
+        "signed_payload": signed_payload,
+        "tee_attestation": { "signature": signature.to_string() }
+    })
+    .to_string()
 }
 
 #[cfg(test)]
@@ -126,6 +137,24 @@ mod tests {
 
         let recovered = sig.recover(RecoveryMessage::Hash(hash)).unwrap();
         assert_eq!(recovered, wallet.address());
+    }
+
+    #[test]
+    fn verifies_signed_payload_evidence() {
+        let wallet: LocalWallet =
+            "0x59c6995e998f97a5a0044966f094538c5c45dae6d8ae152d75d3988b1fc45e59"
+                .parse()
+                .unwrap();
+        let signed_payload = r#"{"action":"hold","value_usdc":0,"pool":"","reason":"No trade"}"#;
+        let hash = hash_message(signed_payload);
+        let sig = wallet.sign_hash(hash).unwrap();
+        let raw = evidence_json(signed_payload, &sig);
+
+        let outcome = verify_evidence(raw.as_bytes(), hash, wallet.address()).unwrap();
+
+        assert_eq!(outcome.signer, wallet.address());
+        assert_eq!(outcome.content_hash, hash);
+        assert_eq!(outcome.signature, sig.to_string());
     }
 
     #[test]
