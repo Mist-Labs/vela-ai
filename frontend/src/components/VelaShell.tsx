@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useAppKit } from "@reown/appkit/react";
 import { CHAIN_ID, CHAIN_NAME, DEPLOYMENT_CONFIGURED } from "@/lib/contracts";
 import { useState } from "react";
 import { useVelaData, useWallet, VelaDataProvider } from "./WalletProvider";
@@ -53,27 +54,12 @@ function shorten(value: string) {
 
 function VelaShellInner({ active, eyebrow, children }: VelaShellProps) {
   const wallet = useWallet();
+  const { open } = useAppKit();
   const data = useVelaData();
   const [actionError, setActionError] = useState("");
   const [pendingAction, setPendingAction] = useState("");
 
   const wrongNetwork = wallet.connected && wallet.chainId !== CHAIN_ID;
-  const buttonLabel = wallet.connecting
-    ? "CONNECTING"
-    : wallet.connected
-      ? shorten(wallet.account)
-      : "CONNECT WALLET";
-
-  async function handleWalletClick() {
-    if (wrongNetwork) {
-      await wallet.switchNetwork();
-      return;
-    }
-    if (!wallet.connected) {
-      await wallet.connect();
-    }
-  }
-
   async function toggleCircuitBreaker() {
     setActionError("");
     setPendingAction(data.circuitBreaker ? "resume" : "pause");
@@ -169,9 +155,31 @@ function VelaShellInner({ active, eyebrow, children }: VelaShellProps) {
               <div className="tb-pill pill-cyan">0G TEE | INTEL TDX</div>
               <div className="tb-pill pill-dim">UNISWAP v4 HOOK</div>
             </div>
-            <button className="connect-btn" onClick={handleWalletClick} type="button">
-              {wrongNetwork ? `SWITCH TO ${CHAIN_NAME.toUpperCase()}` : buttonLabel}
-            </button>
+            {!wallet.connected ? (
+              <button
+                className="connect-btn"
+                onClick={() => void open({ view: "Connect" })}
+                type="button"
+              >
+                CONNECT WALLET
+              </button>
+            ) : wrongNetwork ? (
+              <button
+                className="connect-btn"
+                onClick={() => void open({ view: "Networks" })}
+                type="button"
+              >
+                SWITCH TO {CHAIN_NAME.toUpperCase()}
+              </button>
+            ) : (
+              <button
+                className="connect-btn"
+                onClick={() => void open({ view: "Account" })}
+                type="button"
+              >
+                {shorten(wallet.account)}
+              </button>
+            )}
           </div>
           <div className="content">{children}</div>
         </main>

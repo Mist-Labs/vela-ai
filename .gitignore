@@ -9,3 +9,4 @@ frontend/ui-design*.html
 frontend/.next/
 frontend/out/
 frontend/.vercel/
+.env

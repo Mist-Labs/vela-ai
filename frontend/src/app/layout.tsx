@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Web3Providers from "@/components/Web3Providers";
 import { WalletProvider } from "@/components/WalletProvider";
 import "./globals.css";
 
@@ -16,7 +17,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <WalletProvider>{children}</WalletProvider>
+        <Web3Providers>
+          <WalletProvider>{children}</WalletProvider>
+        </Web3Providers>
       </body>
     </html>
   );

@@ -1,15 +1,9 @@
 "use client";
 
-import {
-  BrowserProvider,
-  Contract,
-  Eip1193Provider,
-  formatUnits,
-  isAddress,
-} from "ethers";
+import { formatUnits, isAddress } from "viem";
+import { useAccount, useChainId, usePublicClient, useSignMessage, useWriteContract } from "wagmi";
 import {
   AGENT_ADDRESS,
-  BASE_SEPOLIA_CHAIN_ID,
   CHAIN_ID,
   CHAIN_NAME,
   DEPLOYMENT_CONFIGURED,
@@ -28,30 +22,17 @@ import {
   useState,
 } from "react";
 
-type EthereumWindow = Window & {
-  ethereum?: Eip1193Provider & {
-    on?: (event: string, listener: (...args: unknown[]) => void) => void;
-    removeListener?: (
-      event: string,
-      listener: (...args: unknown[]) => void,
-    ) => void;
-  };
-};
-
 type WalletContextValue = {
   account: string;
   chainId: number | null;
   connected: boolean;
   connecting: boolean;
   error: string;
-  provider: BrowserProvider | null;
-  connect: () => Promise<void>;
-  switchNetwork: () => Promise<void>;
   signMessage: (message: string) => Promise<string>;
   triggerCircuitBreaker: () => Promise<string>;
   resumeAgent: () => Promise<string>;
   registerPolicy: (
-    policyRoot: string,
+    policyRoot: `0x${string}`,
     policyURI: string,
     tier: number,
     activeHoursStartUtc: number,
@@ -61,202 +42,123 @@ type WalletContextValue = {
 
 const WalletContext = createContext<WalletContextValue | null>(null);
 
-function getEthereum() {
-  if (typeof window === "undefined") return undefined;
-  return (window as EthereumWindow).ethereum;
+function assertReady(account: string, chainId: number) {
+  if (!account) {
+    throw new Error("Connect wallet first.");
+  }
+  if (chainId !== CHAIN_ID) {
+    throw new Error(`Switch to ${CHAIN_NAME} before signing.`);
+  }
 }
 
-function toHexChainId(chainId: number) {
-  return `0x${chainId.toString(16)}`;
+function assertDeploymentConfigured() {
+  if (
+    !DEPLOYMENT_CONFIGURED ||
+    !isAddress(POLICY_REGISTRY_ADDRESS) ||
+    !isAddress(AGENT_ADDRESS)
+  ) {
+    throw new Error("Policy registry and agent addresses are not configured.");
+  }
 }
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
-  const [account, setAccount] = useState("");
-  const [chainId, setChainId] = useState<number | null>(null);
-  const [connecting, setConnecting] = useState(false);
+  const { address, isConnected, isConnecting } = useAccount();
+  const chainId = useChainId();
+  const { signMessageAsync } = useSignMessage();
+  const { writeContractAsync } = useWriteContract();
   const [error, setError] = useState("");
 
-  const provider = useMemo(() => {
-    const ethereum = getEthereum();
-    return ethereum ? new BrowserProvider(ethereum) : null;
-  }, [account, chainId]);
-
-  const refresh = useCallback(async () => {
-    const ethereum = getEthereum();
-    if (!ethereum) return;
-
-    const accounts = (await ethereum.request({
-      method: "eth_accounts",
-    })) as string[];
-    const currentChain = (await ethereum.request({
-      method: "eth_chainId",
-    })) as string;
-
-    setAccount(accounts[0] ?? "");
-    setChainId(Number.parseInt(currentChain, 16));
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    const ethereum = getEthereum();
-    if (!ethereum?.on) return;
-
-    const handleAccounts = (accounts: unknown) => {
-      setAccount(Array.isArray(accounts) ? String(accounts[0] ?? "") : "");
-    };
-    const handleChain = (nextChainId: unknown) => {
-      setChainId(Number.parseInt(String(nextChainId), 16));
-    };
-
-    ethereum.on("accountsChanged", handleAccounts);
-    ethereum.on("chainChanged", handleChain);
-
-    return () => {
-      ethereum.removeListener?.("accountsChanged", handleAccounts);
-      ethereum.removeListener?.("chainChanged", handleChain);
-    };
-  }, [refresh]);
-
-  const connect = useCallback(async () => {
-    const ethereum = getEthereum();
-    if (!ethereum) {
-      setError("Install a wallet with EIP-1193 support to connect.");
-      return;
-    }
-
-    setConnecting(true);
-    setError("");
-    try {
-      const accounts = (await ethereum.request({
-        method: "eth_requestAccounts",
-      })) as string[];
-      const currentChain = (await ethereum.request({
-        method: "eth_chainId",
-      })) as string;
-      setAccount(accounts[0] ?? "");
-      setChainId(Number.parseInt(currentChain, 16));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Wallet connection failed.");
-    } finally {
-      setConnecting(false);
-    }
-  }, []);
-
-  const switchNetwork = useCallback(async () => {
-    const ethereum = getEthereum();
-    if (!ethereum) {
-      setError("Wallet provider not found.");
-      return;
-    }
-
-    try {
-      await ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: toHexChainId(CHAIN_ID) }],
-      });
-      await refresh();
-    } catch (err) {
-      const code = typeof err === "object" && err && "code" in err ? err.code : null;
-      if (code !== 4902 || CHAIN_ID !== BASE_SEPOLIA_CHAIN_ID) {
-        setError(err instanceof Error ? err.message : "Network switch failed.");
-        return;
-      }
-
-      await ethereum.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: toHexChainId(BASE_SEPOLIA_CHAIN_ID),
-            chainName: CHAIN_NAME,
-            nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-            rpcUrls: ["https://sepolia.base.org"],
-            blockExplorerUrls: ["https://sepolia.basescan.org"],
-          },
-        ],
-      });
-      await refresh();
-    }
-  }, [refresh]);
-
-  const requireSigner = useCallback(async () => {
-    const currentProvider = provider;
-    if (!currentProvider || !account) {
-      throw new Error("Connect wallet first.");
-    }
-    if (chainId !== CHAIN_ID) {
-      throw new Error(`Switch to ${CHAIN_NAME} before signing.`);
-    }
-    return currentProvider.getSigner();
-  }, [account, chainId, provider]);
+  const account = address ?? "";
 
   const signMessage = useCallback(
     async (message: string) => {
-      const signer = await requireSigner();
-      return signer.signMessage(message);
+      setError("");
+      try {
+        assertReady(account, chainId);
+        return await signMessageAsync({ message });
+      } catch (err) {
+        const messageText =
+          err instanceof Error ? err.message : "Message signing failed.";
+        setError(messageText);
+        throw new Error(messageText);
+      }
     },
-    [requireSigner],
+    [account, chainId, signMessageAsync],
   );
 
-  const registryContract = useCallback(async () => {
-    if (!DEPLOYMENT_CONFIGURED || !isAddress(POLICY_REGISTRY_ADDRESS)) {
-      throw new Error("Policy registry address is not configured.");
-    }
-    const signer = await requireSigner();
-    return new Contract(POLICY_REGISTRY_ADDRESS, POLICY_REGISTRY_ABI, signer);
-  }, [requireSigner]);
+  const writeRegistry = useCallback(
+    async (functionName: "triggerCircuitBreaker" | "resumeAgent", args: [`0x${string}`]) => {
+      setError("");
+      try {
+        assertReady(account, chainId);
+        assertDeploymentConfigured();
+        return await writeContractAsync({
+          address: POLICY_REGISTRY_ADDRESS as `0x${string}`,
+          abi: POLICY_REGISTRY_ABI,
+          functionName,
+          args,
+          chainId: CHAIN_ID,
+        });
+      } catch (err) {
+        const messageText =
+          err instanceof Error ? err.message : "Transaction failed.";
+        setError(messageText);
+        throw new Error(messageText);
+      }
+    },
+    [account, chainId, writeContractAsync],
+  );
 
   const triggerCircuitBreaker = useCallback(async () => {
-    if (!isAddress(AGENT_ADDRESS)) {
-      throw new Error("Agent address is not configured.");
-    }
-    const contract = await registryContract();
-    const tx = await contract.triggerCircuitBreaker(AGENT_ADDRESS);
-    await tx.wait();
-    return tx.hash as string;
-  }, [registryContract]);
+    const tx = await writeRegistry("triggerCircuitBreaker", [
+      AGENT_ADDRESS as `0x${string}`,
+    ]);
+    return tx;
+  }, [writeRegistry]);
 
   const resumeAgent = useCallback(async () => {
-    if (!isAddress(AGENT_ADDRESS)) {
-      throw new Error("Agent address is not configured.");
-    }
-    const contract = await registryContract();
-    const tx = await contract.resumeAgent(AGENT_ADDRESS);
-    await tx.wait();
-    return tx.hash as string;
-  }, [registryContract]);
+    const tx = await writeRegistry("resumeAgent", [
+      AGENT_ADDRESS as `0x${string}`,
+    ]);
+    return tx;
+  }, [writeRegistry]);
 
   const registerPolicy = useCallback(
     async (
-      policyRoot: string,
+      policyRoot: `0x${string}`,
       policyURI: string,
       tier: number,
       activeHoursStartUtc: number,
       activeHoursEndUtc: number,
     ) => {
-      const contract = await registryContract();
-      const tx = await contract.registerAgentWithPolicy(
-        policyRoot,
-        policyURI,
-        tier,
-        activeHoursStartUtc,
-        activeHoursEndUtc,
-      );
-      await tx.wait();
-      return tx.hash as string;
+      setError("");
+      try {
+        assertReady(account, chainId);
+        assertDeploymentConfigured();
+        return await writeContractAsync({
+          address: POLICY_REGISTRY_ADDRESS as `0x${string}`,
+          abi: POLICY_REGISTRY_ABI,
+          functionName: "registerAgentWithPolicy",
+          args: [policyRoot, policyURI, BigInt(tier), activeHoursStartUtc, activeHoursEndUtc],
+          chainId: CHAIN_ID,
+        });
+      } catch (err) {
+        const messageText =
+          err instanceof Error ? err.message : "Policy registration failed.";
+        setError(messageText);
+        throw new Error(messageText);
+      }
     },
-    [registryContract],
+    [account, chainId, writeContractAsync],
   );
 
   const value = useMemo(
     () => ({
       account,
       chainId,
-      connected: Boolean(account),
-      connecting,
+      connected: isConnected,
+      connecting: isConnecting,
       error,
-      provider,
-      connect,
-      switchNetwork,
       signMessage,
       triggerCircuitBreaker,
       resumeAgent,
@@ -265,14 +167,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [
       account,
       chainId,
-      connect,
-      connecting,
       error,
-      provider,
-      resumeAgent,
+      isConnected,
+      isConnecting,
       registerPolicy,
+      resumeAgent,
       signMessage,
-      switchNetwork,
       triggerCircuitBreaker,
     ],
   );
@@ -320,8 +220,25 @@ export type VelaData = {
 
 const VelaDataContext = createContext<VelaData | null>(null);
 
+type PolicyCommitment = {
+  policyRoot: `0x${string}`;
+  policyURI: string;
+  compliantDecisions: bigint;
+  complianceScore: bigint;
+  active: boolean;
+  circuitBreaker: boolean;
+};
+
+type DecisionRecord = {
+  decisionHash: `0x${string}`;
+  explanation: string;
+  evidenceCID: string;
+  timestamp: bigint;
+  status: number;
+};
+
 export function VelaDataProvider({ children }: { children: React.ReactNode }) {
-  const { provider, connected } = useWallet();
+  const publicClient = usePublicClient({ chainId: CHAIN_ID });
   const [data, setData] = useState<Omit<VelaData, "refresh">>({
     loading: false,
     error: "",
@@ -350,11 +267,11 @@ export function VelaDataProvider({ children }: { children: React.ReactNode }) {
       }));
       return;
     }
-    if (!provider || !connected) {
-      setData((current) => ({ ...current, loading: false, error: "" }));
-      return;
-    }
-    if (!isAddress(POLICY_REGISTRY_ADDRESS) || !isAddress(VELA_VAULT_ADDRESS) || !isAddress(AGENT_ADDRESS)) {
+    if (
+      !isAddress(POLICY_REGISTRY_ADDRESS) ||
+      !isAddress(VELA_VAULT_ADDRESS) ||
+      !isAddress(AGENT_ADDRESS)
+    ) {
       setData((current) => ({
         ...current,
         loading: false,
@@ -362,33 +279,56 @@ export function VelaDataProvider({ children }: { children: React.ReactNode }) {
       }));
       return;
     }
+    if (!publicClient) {
+      setData((current) => ({
+        ...current,
+        loading: false,
+        error: "RPC client is not available.",
+      }));
+      return;
+    }
 
     setData((current) => ({ ...current, loading: true, error: "" }));
     try {
-      const registry = new Contract(
-        POLICY_REGISTRY_ADDRESS,
-        POLICY_REGISTRY_ABI,
-        provider,
-      );
-      const vault = new Contract(VELA_VAULT_ADDRESS, VELA_VAULT_ABI, provider);
-
       const [policy, totalAssets, totalSupply, totalDecisions, recent] =
         await Promise.all([
-          registry.getPolicy(AGENT_ADDRESS),
-          vault.totalAssets(),
-          vault.totalSupply(),
-          vault.totalDecisions(),
-          vault.recentDecisions(12),
+          publicClient.readContract({
+            address: POLICY_REGISTRY_ADDRESS as `0x${string}`,
+            abi: POLICY_REGISTRY_ABI,
+            functionName: "getPolicy",
+            args: [AGENT_ADDRESS as `0x${string}`],
+          }),
+          publicClient.readContract({
+            address: VELA_VAULT_ADDRESS as `0x${string}`,
+            abi: VELA_VAULT_ABI,
+            functionName: "totalAssets",
+          }),
+          publicClient.readContract({
+            address: VELA_VAULT_ADDRESS as `0x${string}`,
+            abi: VELA_VAULT_ABI,
+            functionName: "totalSupply",
+          }),
+          publicClient.readContract({
+            address: VELA_VAULT_ADDRESS as `0x${string}`,
+            abi: VELA_VAULT_ABI,
+            functionName: "totalDecisions",
+          }),
+          publicClient.readContract({
+            address: VELA_VAULT_ADDRESS as `0x${string}`,
+            abi: VELA_VAULT_ABI,
+            functionName: "recentDecisions",
+            args: [12n],
+          }),
         ]);
 
-      const decisionCount = Number(totalDecisions);
-      const decisions = (recent as Array<{
-        decisionHash: string;
-        explanation: string;
-        evidenceCID: string;
-        timestamp: bigint;
-        status: bigint;
-      }>).map((record, index) => ({
+      const typedPolicy = policy as PolicyCommitment;
+      const typedRecent = recent as DecisionRecord[];
+      const typedTotalAssets = totalAssets as bigint;
+      const typedTotalSupply = totalSupply as bigint;
+      const typedTotalDecisions = totalDecisions as bigint;
+
+      const decisionCount = Number(typedTotalDecisions);
+      const decisions = typedRecent.map((record, index) => ({
         id: decisionCount - index - 1,
         explanation: record.explanation,
         evidenceCID: record.evidenceCID,
@@ -403,15 +343,15 @@ export function VelaDataProvider({ children }: { children: React.ReactNode }) {
         configured: true,
         vaultAddress: VELA_VAULT_ADDRESS,
         agentAddress: AGENT_ADDRESS,
-        policyRoot: String(policy.policyRoot),
-        policyURI: String(policy.policyURI),
-        totalAssets: formatUnits(totalAssets, VAULT_ASSET_DECIMALS),
-        totalSupply: formatUnits(totalSupply, VAULT_ASSET_DECIMALS),
-        totalDecisions: totalDecisions.toString(),
-        compliantDecisions: policy.compliantDecisions.toString(),
-        complianceScore: `${Number(policy.complianceScore) / 10}%`,
-        active: Boolean(policy.active),
-        circuitBreaker: Boolean(policy.circuitBreaker),
+        policyRoot: typedPolicy.policyRoot,
+        policyURI: typedPolicy.policyURI,
+        totalAssets: formatUnits(typedTotalAssets, VAULT_ASSET_DECIMALS),
+        totalSupply: formatUnits(typedTotalSupply, VAULT_ASSET_DECIMALS),
+        totalDecisions: typedTotalDecisions.toString(),
+        compliantDecisions: typedPolicy.compliantDecisions.toString(),
+        complianceScore: `${Number(typedPolicy.complianceScore) / 10}%`,
+        active: typedPolicy.active,
+        circuitBreaker: typedPolicy.circuitBreaker,
         decisions,
       });
     } catch (err) {
@@ -421,7 +361,7 @@ export function VelaDataProvider({ children }: { children: React.ReactNode }) {
         error: err instanceof Error ? err.message : "Failed to load live vault data.",
       }));
     }
-  }, [connected, provider]);
+  }, [publicClient]);
 
   useEffect(() => {
     void refresh();
