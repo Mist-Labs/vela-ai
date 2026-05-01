@@ -18,33 +18,33 @@ import { ethers } from "ethers";
 // ─────────────────────────────── types ───────────────────────────────────────
 
 export interface TeeAttestation {
-  enclave_id:  string;
-  model:       string;
-  input_hash:  string;
-  signature:   string;  // provider ECDSA signature over the signed payload digest
-  report:      string;  // base64-encoded Intel TDX attestation report
-  tee_mode:    "TeeML" | "TeeTLS";
+  enclave_id: string;
+  model: string;
+  input_hash: string;
+  signature: string; // provider ECDSA signature over the signed payload digest
+  report: string; // base64-encoded Intel TDX attestation report
+  tee_mode: "TeeML" | "TeeTLS";
 }
 
 export interface DecisionRecord {
   signed_payload: string;
   decision: {
-    action:     "swap" | "hold" | "rebalance";
+    action: "swap" | "hold" | "rebalance";
     value_usdc: number;
-    pool:       string;
-    reason:     string;
+    pool: string;
+    reason: string;
   };
-  policy_root:           string;
+  policy_root: string;
   constraints_evaluated: Record<string, string>;
-  tee_attestation:       TeeAttestation | null;
-  agent:                 string;
-  vault:                 string;
-  timestamp:             number;
+  tee_attestation: TeeAttestation | null;
+  agent: string;
+  vault: string;
+  timestamp: number;
 }
 
 export interface UploadResult {
   /** 0G DA root hash — use as CID in commitDecision() */
-  rootHash:    string;
+  rootHash: string;
   /** EIP-191 digest of the exact provider-signed payload — committed on-chain */
   contentHash: string;
 }
@@ -56,14 +56,10 @@ export class ZeroGStorageClient {
   private readonly zgRpcUrl: string;
   private readonly signer: ethers.Wallet;
 
-  constructor(
-    indexerUrl: string,
-    zgRpcUrl:   string,
-    signer:     ethers.Wallet
-  ) {
-    this.indexer   = new Indexer(indexerUrl);
-    this.zgRpcUrl  = zgRpcUrl;
-    this.signer    = signer;
+  constructor(indexerUrl: string, zgRpcUrl: string, signer: ethers.Wallet) {
+    this.indexer = new Indexer(indexerUrl);
+    this.zgRpcUrl = zgRpcUrl;
+    this.signer = signer;
   }
 
   // ── upload ──────────────────────────────────────────────────────────────────
@@ -78,7 +74,7 @@ export class ZeroGStorageClient {
    * @throws if the upload fails after retries.
    */
   async uploadDecisionRecord(record: DecisionRecord): Promise<UploadResult> {
-    const json    = JSON.stringify(record, null, 2);
+    const json = JSON.stringify(record, null, 2);
     const encoded = new TextEncoder().encode(json);
 
     // contentHash: EIP-191 digest of the exact payload signed by the 0G provider.
@@ -99,7 +95,7 @@ export class ZeroGStorageClient {
     const [, uploadErr] = await this.indexer.upload(
       memData,
       this.zgRpcUrl,
-      this.signer as never
+      this.signer as never,
     );
 
     if (uploadErr !== null) {
@@ -120,27 +116,52 @@ export class ZeroGStorageClient {
    * @throws if the download or parse fails.
    */
   async fetchDecisionRecord(rootHash: string): Promise<{
-    record:      DecisionRecord;
+    record: DecisionRecord;
     contentHash: string;
   }> {
     const tmpPath = `/tmp/vela-record-${rootHash.slice(0, 16)}.json`;
 
     const downloadErr = await this.indexer.download(rootHash, tmpPath, true);
     if (downloadErr !== null) {
-      throw new Error(`0G DA: download failed for ${rootHash} — ${downloadErr}`);
+      throw new Error(
+        `0G DA: download failed for ${rootHash} — ${downloadErr}`,
+      );
     }
 
     // Read back and parse.
     const { readFileSync } = await import("fs");
-    const raw  = readFileSync(tmpPath, "utf-8");
+    const raw = readFileSync(tmpPath, "utf-8");
     let record: DecisionRecord;
     try {
       record = JSON.parse(raw) as DecisionRecord;
     } catch (e) {
-      throw new Error(`0G DA: failed to parse record JSON for ${rootHash} — ${e}`);
+      throw new Error(
+        `0G DA: failed to parse record JSON for ${rootHash} — ${e}`,
+      );
     }
 
     return { record, contentHash: ethers.hashMessage(record.signed_payload) };
+  }
+
+  /**
+   * Fetch raw bytes from 0G DA by root hash.
+   * Used by the agent to decode policyURI constraint blobs without
+   * assuming JSON structure — caller decides how to parse.
+   *
+   * @throws if download fails.
+   */
+  async fetchRaw(rootHash: string): Promise<Uint8Array> {
+    const tmpPath = `/tmp/vela-raw-${rootHash.slice(0, 16)}.bin`;
+
+    const downloadErr = await this.indexer.download(rootHash, tmpPath, true);
+    if (downloadErr !== null) {
+      throw new Error(
+        `0G DA: fetchRaw download failed for ${rootHash} — ${downloadErr}`,
+      );
+    }
+
+    const { readFileSync } = await import("fs");
+    return new Uint8Array(readFileSync(tmpPath));
   }
 
   // ── verify integrity ────────────────────────────────────────────────────────
@@ -152,8 +173,8 @@ export class ZeroGStorageClient {
    * Returns true if hashes match, false if tampered.
    */
   async verifyRecordIntegrity(
-    rootHash:        string,
-    committedHash:   string
+    rootHash: string,
+    committedHash: string,
   ): Promise<{ valid: boolean; fetchedHash: string; record: DecisionRecord }> {
     const { record, contentHash: fetchedHash } =
       await this.fetchDecisionRecord(rootHash);
@@ -170,12 +191,14 @@ export class ZeroGStorageClient {
  * Create a ZeroGStorageClient from environment variables.
  * Call this once at agent startup.
  */
-export function createZeroGStorageClient(signer: ethers.Wallet): ZeroGStorageClient {
+export function createZeroGStorageClient(
+  signer: ethers.Wallet,
+): ZeroGStorageClient {
   const indexerUrl = process.env.ZERO_G_INDEXER_URL;
-  const zgRpcUrl   = process.env.ZERO_G_RPC_URL;
+  const zgRpcUrl = process.env.ZERO_G_RPC_URL;
 
   if (!indexerUrl) throw new Error("ZERO_G_INDEXER_URL not set");
-  if (!zgRpcUrl)   throw new Error("ZERO_G_RPC_URL not set");
+  if (!zgRpcUrl) throw new Error("ZERO_G_RPC_URL not set");
 
   return new ZeroGStorageClient(indexerUrl, zgRpcUrl, signer);
 }

@@ -18,10 +18,7 @@
 
 import "dotenv/config";
 import { ethers } from "ethers";
-import {
-  createZeroGStorageClient,
-  type DecisionRecord,
-} from "./zero-g.js";
+import { createZeroGStorageClient, type DecisionRecord } from "./zero-g.js";
 import {
   createZeroGComputeClient,
   type MarketData,
@@ -72,8 +69,8 @@ const MAX_SQRT_PRICE_MINUS_ONE =
  * Adjusts for token decimals: USDC=6, WETH=18.
  */
 function sqrtPriceX96ToUsdc(sqrtPriceX96: bigint): number {
-  const Q96    = 2n ** 96n;
-  const price  = (sqrtPriceX96 * sqrtPriceX96 * 10n ** 12n) / (Q96 * Q96);
+  const Q96 = 2n ** 96n;
+  const price = (sqrtPriceX96 * sqrtPriceX96 * 10n ** 12n) / (Q96 * Q96);
   return Number(price) / 1e6;
 }
 
@@ -103,7 +100,13 @@ function unitsFromNumber(value: number, decimals: number): bigint {
 function computePoolId(config: HookPoolConfig): string {
   const encoded = ethers.AbiCoder.defaultAbiCoder().encode(
     ["address", "address", "uint24", "int24", "address"],
-    [config.currency0, config.currency1, config.fee, config.tickSpacing, config.hooks],
+    [
+      config.currency0,
+      config.currency1,
+      config.fee,
+      config.tickSpacing,
+      config.hooks,
+    ],
   );
   return ethers.keccak256(encoded);
 }
@@ -124,68 +127,83 @@ type HookPoolConfig = {
 // ─────────────────────────────── VelaAgent ───────────────────────────────────
 
 export class VelaAgent {
-  private readonly provider:    ethers.JsonRpcProvider;
-  private readonly signer:      ethers.Wallet;
-  private readonly vault:       ethers.Contract;
+  private readonly provider: ethers.JsonRpcProvider;
+  private readonly signer: ethers.Wallet;
+  private readonly vault: ethers.Contract;
   private readonly attestation: ethers.Contract;
-  private readonly registry:    ethers.Contract;
-  private readonly stateView:   ethers.Contract;
+  private readonly registry: ethers.Contract;
+  private readonly stateView: ethers.Contract;
 
-  private readonly agentAddress:  string;
-  private readonly vaultAddress:  string;
+  private readonly agentAddress: string;
+  private readonly vaultAddress: string;
   private readonly pool: HookPoolConfig;
   private readonly slippageBps: number;
 
   private computeClient: ZeroGComputeClient | null = null;
-  private storageClient: ReturnType<typeof createZeroGStorageClient> | null = null;
+  private storageClient: ReturnType<typeof createZeroGStorageClient> | null =
+    null;
 
   private lastTradeTimestamp: number = 0;
   private running: boolean = false;
 
   constructor() {
-    const rpcUrl             = process.env.RPC_URL!;
-    const privateKey         = process.env.PRIVATE_KEY!;
-    const vaultAddress       = process.env.VELA_VAULT_ADDRESS!;
+    const rpcUrl = process.env.RPC_URL!;
+    const privateKey = process.env.PRIVATE_KEY!;
+    const vaultAddress = process.env.VELA_VAULT_ADDRESS!;
     const attestationAddress = process.env.ATTESTATION_CONTRACT_ADDRESS!;
-    const registryAddress    = process.env.POLICY_REGISTRY_ADDRESS!;
-    const stateViewAddress   = process.env.STATE_VIEW_ADDRESS!;
+    const registryAddress = process.env.POLICY_REGISTRY_ADDRESS!;
+    const stateViewAddress = process.env.STATE_VIEW_ADDRESS!;
 
     for (const [k, v] of Object.entries({
-      RPC_URL:                      rpcUrl,
-      PRIVATE_KEY:                  privateKey,
-      VELA_VAULT_ADDRESS:           vaultAddress,
+      RPC_URL: rpcUrl,
+      PRIVATE_KEY: privateKey,
+      VELA_VAULT_ADDRESS: vaultAddress,
       ATTESTATION_CONTRACT_ADDRESS: attestationAddress,
-      POLICY_REGISTRY_ADDRESS:      registryAddress,
-      STATE_VIEW_ADDRESS:           stateViewAddress,
+      POLICY_REGISTRY_ADDRESS: registryAddress,
+      STATE_VIEW_ADDRESS: stateViewAddress,
     })) {
       if (!v) throw new Error(`Missing required env var: ${k}`);
     }
 
     const hookAddress = envAddress("VELA_HOOK_ADDRESS");
     this.pool = {
-      name:           process.env.ACTIVE_POOL_NAME ?? "ETH/USDC v4",
-      currency0:      envAddress("ACTIVE_POOL_CURRENCY0"),
-      currency1:      envAddress("ACTIVE_POOL_CURRENCY1"),
-      fee:            envInt("ACTIVE_POOL_FEE", 3000),
-      tickSpacing:    envInt("ACTIVE_POOL_TICK_SPACING", 60),
-      hooks:          hookAddress,
-      zeroForOne:     (process.env.ACTIVE_POOL_ZERO_FOR_ONE ?? "false").toLowerCase() === "true",
+      name: process.env.ACTIVE_POOL_NAME ?? "ETH/USDC v4",
+      currency0: envAddress("ACTIVE_POOL_CURRENCY0"),
+      currency1: envAddress("ACTIVE_POOL_CURRENCY1"),
+      fee: envInt("ACTIVE_POOL_FEE", 3000),
+      tickSpacing: envInt("ACTIVE_POOL_TICK_SPACING", 60),
+      hooks: hookAddress,
+      zeroForOne:
+        (process.env.ACTIVE_POOL_ZERO_FOR_ONE ?? "false").toLowerCase() ===
+        "true",
       token0Decimals: envInt("ACTIVE_POOL_TOKEN0_DECIMALS", 18),
       token1Decimals: envInt("ACTIVE_POOL_TOKEN1_DECIMALS", 6),
-      poolId:         "",
+      poolId: "",
     };
     this.pool.poolId = process.env.ACTIVE_POOL_ID || computePoolId(this.pool);
     this.slippageBps = envInt("TRADE_SLIPPAGE_BPS", 100);
 
-    this.provider    = new ethers.JsonRpcProvider(rpcUrl);
-    this.signer      = new ethers.Wallet(privateKey, this.provider);
+    this.provider = new ethers.JsonRpcProvider(rpcUrl);
+    this.signer = new ethers.Wallet(privateKey, this.provider);
     this.agentAddress = this.signer.address;
     this.vaultAddress = vaultAddress;
 
-    this.vault       = new ethers.Contract(vaultAddress,       VAULT_ABI,          this.signer);
-    this.attestation = new ethers.Contract(attestationAddress, ATTESTATION_ABI,    this.signer);
-    this.registry    = new ethers.Contract(registryAddress,    POLICY_REGISTRY_ABI, this.signer);
-    this.stateView   = new ethers.Contract(stateViewAddress,   STATE_VIEW_ABI,     this.provider);
+    this.vault = new ethers.Contract(vaultAddress, VAULT_ABI, this.signer);
+    this.attestation = new ethers.Contract(
+      attestationAddress,
+      ATTESTATION_ABI,
+      this.signer,
+    );
+    this.registry = new ethers.Contract(
+      registryAddress,
+      POLICY_REGISTRY_ABI,
+      this.signer,
+    );
+    this.stateView = new ethers.Contract(
+      stateViewAddress,
+      STATE_VIEW_ABI,
+      this.provider,
+    );
   }
 
   // ── startup ──────────────────────────────────────────────────────────────────
@@ -203,7 +221,7 @@ export class VelaAgent {
     if (!isActive) {
       throw new Error(
         "Agent is not active in PolicyRegistry. " +
-        "Run PolicyRegistry.registerAgent() first."
+          "Run PolicyRegistry.registerAgent() first.",
       );
     }
     console.log("  Policy: active ✓");
@@ -212,7 +230,7 @@ export class VelaAgent {
     if (trustedHook.toLowerCase() !== this.pool.hooks.toLowerCase()) {
       throw new Error(
         `Vault trustedHook (${trustedHook}) does not match ACTIVE pool hook (${this.pool.hooks}). ` +
-        "Set VelaVault.setTrustedHook(VELA_HOOK_ADDRESS) before starting the agent."
+          "Set VelaVault.setTrustedHook(VELA_HOOK_ADDRESS) before starting the agent.",
       );
     }
     console.log("  VelaHook: trusted ✓");
@@ -230,7 +248,9 @@ export class VelaAgent {
 
   async start(): Promise<void> {
     this.running = true;
-    console.log(`[Agent] Loop started — interval: ${LOOP_INTERVAL_MS / 1000}s\n`);
+    console.log(
+      `[Agent] Loop started — interval: ${LOOP_INTERVAL_MS / 1000}s\n`,
+    );
 
     while (this.running) {
       try {
@@ -265,13 +285,13 @@ export class VelaAgent {
     console.log("[Agent] [3/6] Requesting decision from 0G Sealed Inference…");
     const inferenceResult = await this.computeClient!.requestDecision(
       market,
-      constraints
+      constraints,
     );
 
     console.log(
       `[Agent]       Decision: ${inferenceResult.decision.action.toUpperCase()} ` +
-      `$${inferenceResult.decision.value_usdc.toLocaleString()} USDC — ` +
-      inferenceResult.decision.reason
+        `$${inferenceResult.decision.value_usdc.toLocaleString()} USDC — ` +
+        inferenceResult.decision.reason,
     );
 
     // If hold, nothing to do this iteration.
@@ -291,20 +311,21 @@ export class VelaAgent {
     console.log("[Agent] [4/6] Uploading decision record to 0G DA…");
     const record: DecisionRecord = {
       signed_payload: inferenceResult.rawResponse,
-      decision:  inferenceResult.decision,
+      decision: inferenceResult.decision,
       policy_root: constraints.policyRoot,
       constraints_evaluated: {
         value_check: `${inferenceResult.decision.value_usdc <= constraints.maxValuePerTxUsdc ? "PASS" : "FAIL"} -- ${inferenceResult.decision.value_usdc} vs ${constraints.maxValuePerTxUsdc}`,
-        pool_check:  `${constraints.allowedPools.includes(inferenceResult.decision.pool) ? "PASS" : "FAIL"} -- ${inferenceResult.decision.pool}`,
+        pool_check: `${constraints.allowedPools.includes(inferenceResult.decision.pool) ? "PASS" : "FAIL"} -- ${inferenceResult.decision.pool}`,
         hours_check: this._checkActiveHours(constraints) ? "PASS" : "FAIL",
       },
       tee_attestation: inferenceResult.teeAttestation,
-      agent:           this.agentAddress,
-      vault:           this.vaultAddress,
-      timestamp:       Math.floor(Date.now() / 1000),
+      agent: this.agentAddress,
+      vault: this.vaultAddress,
+      timestamp: Math.floor(Date.now() / 1000),
     };
 
-    const { rootHash, contentHash } = await this.storageClient!.uploadDecisionRecord(record);
+    const { rootHash, contentHash } =
+      await this.storageClient!.uploadDecisionRecord(record);
     console.log(`[Agent]       0G DA CID:     ${rootHash}`);
     console.log(`[Agent]       Content hash:  ${contentHash}`);
 
@@ -313,11 +334,13 @@ export class VelaAgent {
     const commitTx = await this.vault.commitDecision(
       contentHash,
       inferenceResult.decision.reason,
-      rootHash
+      rootHash,
     );
     const commitReceipt = await commitTx.wait();
-    const decisionId    = this._parseDecisionId(commitReceipt);
-    console.log(`[Agent]       Decision ID: ${decisionId}  TX: ${commitReceipt.hash}`);
+    const decisionId = this._parseDecisionId(commitReceipt);
+    console.log(
+      `[Agent]       Decision ID: ${decisionId}  TX: ${commitReceipt.hash}`,
+    );
 
     // 6. Execute trade through VelaHook.
     // Hook enforces policy at beforeSwap() — reverts if any constraint violated.
@@ -327,25 +350,79 @@ export class VelaAgent {
     console.log("[Agent]       Trade executed ✓");
 
     // 7. Verify and settle TEE attestation on-chain (background — non-blocking).
-    this._settleAsync(decisionId, contentHash, inferenceResult.teeAttestation.signature);
+    this._settleAsync(
+      decisionId,
+      contentHash,
+      inferenceResult.teeAttestation.signature,
+    );
 
     console.log(`[Agent] ── iteration complete ──\n`);
   }
 
   // ── step implementations ─────────────────────────────────────────────────────
 
-  private async _fetchPolicyConstraints(): Promise<PolicyConstraints & { policyRoot: string }> {
+  private async _fetchPolicyConstraints(): Promise<
+    PolicyConstraints & { policyRoot: string }
+  > {
     console.log("[Agent] [1/6] Fetching policy constraints…");
     const policy = await this.registry.getPolicy(this.agentAddress);
 
+    let maxAllocationPerPool = 10_000;
+    let stopLossBps = 1_500;
+    let allowedPools: string[] = [this.pool.name];
+
+    // Decode stored constraints from policyURI (0G DA CID or HTTP URL)
+    const policyUri: string = policy.policyURI ?? "";
+    if (policyUri) {
+      try {
+        let raw: Uint8Array;
+        if (
+          policyUri.startsWith("http://") ||
+          policyUri.startsWith("https://")
+        ) {
+          const res = await fetch(policyUri);
+          raw = new Uint8Array(await res.arrayBuffer());
+        } else if (this.storageClient) {
+          raw = await this.storageClient.fetchRaw(policyUri);
+        } else {
+          throw new Error("no storage client for non-HTTP policyURI");
+        }
+        const decoded = JSON.parse(new TextDecoder().decode(raw)) as {
+          constraints?: {
+            max_allocation_per_pool_bps?: number;
+            stop_loss_bps?: number;
+            allowed_pools?: string[];
+          };
+        };
+        const c = decoded.constraints;
+        if (c) {
+          if (typeof c.max_allocation_per_pool_bps === "number") {
+            maxAllocationPerPool = c.max_allocation_per_pool_bps;
+          }
+          if (typeof c.stop_loss_bps === "number") {
+            stopLossBps = c.stop_loss_bps;
+          }
+          if (Array.isArray(c.allowed_pools) && c.allowed_pools.length > 0) {
+            allowedPools = c.allowed_pools;
+          }
+        }
+        console.log("[Agent]       Constraints decoded from policyURI ✓");
+      } catch (err) {
+        console.warn(
+          "[Agent]       Failed to decode policyURI constraints, using safe defaults:",
+          err,
+        );
+      }
+    }
+
     return {
-      policyRoot:           policy.policyRoot,
-      maxValuePerTxUsdc:    Number(policy.maxValuePerTxUsdc),
-      maxAllocationPerPool: 10_000,
-      stopLossBps:          1_500,
-      activeHoursStartUtc:  Number(policy.activeHoursStartUtc),
-      activeHoursEndUtc:    Number(policy.activeHoursEndUtc),
-      allowedPools:         [this.pool.name],
+      policyRoot: policy.policyRoot,
+      maxValuePerTxUsdc: Number(policy.maxValuePerTxUsdc),
+      maxAllocationPerPool,
+      stopLossBps,
+      activeHoursStartUtc: Number(policy.activeHoursStartUtc),
+      activeHoursEndUtc: Number(policy.activeHoursEndUtc),
+      allowedPools,
     };
   }
 
@@ -353,26 +430,94 @@ export class VelaAgent {
     console.log("[Agent] [2/6] Fetching market data from Uniswap v4…");
 
     const [sqrtPriceX96] = await this.stateView.getSlot0(this.pool.poolId);
-    const priceUsdc      = sqrtPriceX96ToUsdc(sqrtPriceX96);
+    const priceUsdc = sqrtPriceX96ToUsdc(sqrtPriceX96);
+
+    let currentApy = 0;
+    let tvlUsdc = 0;
+    let volume24hUsdc = 0;
+
+    const subgraphUrl = process.env.UNISWAP_V4_SUBGRAPH_URL;
+    if (subgraphUrl) {
+      try {
+        const poolIdHex = this.pool.poolId.toLowerCase();
+        const query = `{
+        pool(id: "${poolIdHex}") {
+          totalValueLockedUSD
+          volumeUSD
+          feesUSD
+          poolDayData(first: 1, orderBy: date, orderDirection: desc) {
+            volumeUSD
+            feesUSD
+            tvlUSD
+          }
+        }
+      }`;
+        const res = await fetch(subgraphUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query }),
+        });
+        const json = (await res.json()) as {
+          data?: {
+            pool?: {
+              totalValueLockedUSD?: string;
+              poolDayData?: Array<{
+                volumeUSD?: string;
+                feesUSD?: string;
+                tvlUSD?: string;
+              }>;
+            };
+          };
+        };
+        const pool = json.data?.pool;
+        if (pool) {
+          tvlUsdc = parseFloat(pool.totalValueLockedUSD ?? "0");
+          const day = pool.poolDayData?.[0];
+          if (day) {
+            volume24hUsdc = parseFloat(day.volumeUSD ?? "0");
+            const feesDay = parseFloat(day.feesUSD ?? "0");
+            const tvlDay = parseFloat(day.tvlUSD ?? "0");
+            // Annualise: APY ≈ (daily fees / TVL) * 365 * 100
+            if (tvlDay > 0) {
+              currentApy = (feesDay / tvlDay) * 365 * 100;
+            }
+          }
+        }
+        console.log(
+          `[Agent]       Market: price=$${priceUsdc.toFixed(2)} tvl=$${tvlUsdc.toLocaleString()} vol24h=$${volume24hUsdc.toLocaleString()} apy=${currentApy.toFixed(2)}%`,
+        );
+      } catch (err) {
+        console.warn(
+          "[Agent]       Subgraph fetch failed, using on-chain price only:",
+          err,
+        );
+      }
+    } else {
+      console.warn(
+        "[Agent]       UNISWAP_V4_SUBGRAPH_URL not set — APY/TVL/volume will be 0",
+      );
+    }
 
     return {
-      poolId:        this.pool.poolId,
-      poolName:      this.pool.name,
-      currentApy:    7.2,          // TODO: fetch from Uniswap subgraph
-      sqrtPriceX96:  sqrtPriceX96.toString(),
+      poolId: this.pool.poolId,
+      poolName: this.pool.name,
+      currentApy,
+      sqrtPriceX96: sqrtPriceX96.toString(),
       priceUsdc,
-      tvlUsdc:       0,            // TODO: fetch from subgraph
-      volume24hUsdc: 0,
-      timestamp:     Math.floor(Date.now() / 1000),
+      tvlUsdc,
+      volume24hUsdc,
+      timestamp: Math.floor(Date.now() / 1000),
     };
   }
 
   private async _executeTrade(
-    decision:    { action: string; value_usdc: number; pool: string },
-    _constraints: PolicyConstraints
+    decision: { action: string; value_usdc: number; pool: string },
+    _constraints: PolicyConstraints,
   ): Promise<void> {
     if (decision.pool !== this.pool.name) {
-      throw new Error(`Decision requested ${decision.pool}; only ${this.pool.name} is configured.`);
+      throw new Error(
+        `Decision requested ${decision.pool}; only ${this.pool.name} is configured.`,
+      );
     }
     if (decision.action !== "swap" && decision.action !== "rebalance") {
       throw new Error(`Unsupported executable action: ${decision.action}`);
@@ -380,24 +525,32 @@ export class VelaAgent {
 
     const [sqrtPriceX96] = await this.stateView.getSlot0(this.pool.poolId);
     const priceUsdc = sqrtPriceX96ToUsdc(sqrtPriceX96);
-    const amountIn = this._decisionValueToAmountIn(decision.value_usdc, priceUsdc);
-    const minAmountOut = this._estimateMinAmountOut(decision.value_usdc, priceUsdc);
-    const sqrtPriceLimitX96 = this.pool.zeroForOne ? MIN_SQRT_PRICE_PLUS_ONE : MAX_SQRT_PRICE_MINUS_ONE;
+    const amountIn = this._decisionValueToAmountIn(
+      decision.value_usdc,
+      priceUsdc,
+    );
+    const minAmountOut = this._estimateMinAmountOut(
+      decision.value_usdc,
+      priceUsdc,
+    );
+    const sqrtPriceLimitX96 = this.pool.zeroForOne
+      ? MIN_SQRT_PRICE_PLUS_ONE
+      : MAX_SQRT_PRICE_MINUS_ONE;
 
     console.log(
       `[Agent]       Executing ${decision.action} through VelaHook only: ` +
-      `${amountIn.toString()} input units, minOut ${minAmountOut.toString()}`
+        `${amountIn.toString()} input units, minOut ${minAmountOut.toString()}`,
     );
 
     const tx = await this.vault.executeHookSwap({
       key: {
-        currency0:   this.pool.currency0,
-        currency1:   this.pool.currency1,
-        fee:         this.pool.fee,
+        currency0: this.pool.currency0,
+        currency1: this.pool.currency1,
+        fee: this.pool.fee,
         tickSpacing: this.pool.tickSpacing,
-        hooks:       this.pool.hooks,
+        hooks: this.pool.hooks,
       },
-      zeroForOne:         this.pool.zeroForOne,
+      zeroForOne: this.pool.zeroForOne,
       amountIn,
       minAmountOut,
       sqrtPriceLimitX96,
@@ -411,9 +564,9 @@ export class VelaAgent {
    * Non-blocking — does not delay the trade loop.
    */
   private _settleAsync(
-    decisionId:  bigint,
+    decisionId: bigint,
     contentHash: string,
-    enclaveSignature: string
+    enclaveSignature: string,
   ): void {
     (async () => {
       try {
@@ -421,13 +574,17 @@ export class VelaAgent {
           this.vaultAddress,
           decisionId,
           contentHash,
-          enclaveSignature
+          enclaveSignature,
         );
         await tx.wait();
-        console.log(`[Agent] [Settle] Decision ${decisionId} attested on-chain ✓`);
+        console.log(
+          `[Agent] [Settle] Decision ${decisionId} attested on-chain ✓`,
+        );
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[Agent] [Settle] Attestation pending for decision ${decisionId}: ${msg}`);
+        console.warn(
+          `[Agent] [Settle] Attestation pending for decision ${decisionId}: ${msg}`,
+        );
       }
     })();
   }
@@ -438,7 +595,7 @@ export class VelaAgent {
     const hourUtc = new Date().getUTCHours();
     return (
       hourUtc >= constraints.activeHoursStartUtc &&
-      hourUtc <  constraints.activeHoursEndUtc
+      hourUtc < constraints.activeHoursEndUtc
     );
   }
 
@@ -457,7 +614,10 @@ export class VelaAgent {
     throw new Error("DecisionCommitted event not found in receipt");
   }
 
-  private _decisionValueToAmountIn(valueUsdc: number, priceUsdc: number): bigint {
+  private _decisionValueToAmountIn(
+    valueUsdc: number,
+    priceUsdc: number,
+  ): bigint {
     if (this.pool.zeroForOne) {
       const token0Amount = valueUsdc / priceUsdc;
       return unitsFromNumber(token0Amount, this.pool.token0Decimals);
@@ -488,8 +648,14 @@ async function main() {
   await agent.init();
 
   // Graceful shutdown.
-  process.on("SIGINT",  () => { agent.stop(); process.exit(0); });
-  process.on("SIGTERM", () => { agent.stop(); process.exit(0); });
+  process.on("SIGINT", () => {
+    agent.stop();
+    process.exit(0);
+  });
+  process.on("SIGTERM", () => {
+    agent.stop();
+    process.exit(0);
+  });
 
   await agent.start();
 }
