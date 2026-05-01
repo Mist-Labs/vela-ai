@@ -18,6 +18,7 @@ pub struct TeeAttestation {
 #[derive(Clone, Debug)]
 pub struct EvidenceFetcher {
     client: reqwest::Client,
+    zero_g_indexer_url: Option<String>,
     url_template: Option<String>,
     local_dir: Option<PathBuf>,
 }
@@ -33,6 +34,7 @@ impl EvidenceFetcher {
     pub fn from_env() -> Self {
         Self {
             client: reqwest::Client::new(),
+            zero_g_indexer_url: std::env::var("ZERO_G_STORAGE_INDEXER_URL").ok(),
             url_template: std::env::var("ZERO_G_FETCH_URL_TEMPLATE").ok(),
             local_dir: std::env::var("WATCHTOWER_RECORD_DIR")
                 .ok()
@@ -41,26 +43,60 @@ impl EvidenceFetcher {
     }
 
     pub async fn fetch_raw(&self, cid: &str) -> Result<Vec<u8>> {
+        // Direct HTTP CID (legacy / test path)
         if cid.starts_with("http://") || cid.starts_with("https://") {
             return self.fetch_url(cid).await;
         }
 
+        // 0G storage indexer — production path.
+        // CID is a 0G root hash: 64 hex chars optionally prefixed with 0x.
+        if self.is_zero_g_cid(cid) {
+            if let Some(indexer) = &self.zero_g_indexer_url {
+                let url = format!(
+                    "{}/file?root={}",
+                    indexer.trim_end_matches('/'),
+                    cid
+                );
+                tracing::info!(cid, url, "fetching evidence from 0G storage indexer");
+                return self.fetch_url(&url).await;
+            } else {
+                tracing::warn!(
+                    cid,
+                    "CID looks like a 0G root hash but ZERO_G_STORAGE_INDEXER_URL is not set; \
+                     falling through to template/local fallbacks"
+                );
+            }
+        }
+
+        // Local dir fallback (dev / CI)
         if let Some(dir) = &self.local_dir {
             let safe_name = cid.replace('/', "_");
             let path = dir.join(format!("{safe_name}.json"));
+            tracing::debug!(path = %path.display(), "fetching evidence from local dir");
             return tokio::fs::read(&path)
                 .await
                 .with_context(|| format!("failed to read local evidence file {}", path.display()));
         }
 
+        // URL template fallback
         if let Some(template) = &self.url_template {
             let url = template.replace("{cid}", cid);
+            tracing::debug!(url, "fetching evidence via URL template");
             return self.fetch_url(&url).await;
         }
 
         bail!(
-            "no evidence fetcher configured; set ZERO_G_FETCH_URL_TEMPLATE, WATCHTOWER_RECORD_DIR, or use an HTTP evidence CID"
+            "no evidence fetcher configured for CID `{cid}`; \
+             set ZERO_G_STORAGE_INDEXER_URL for production, \
+             WATCHTOWER_RECORD_DIR for local, \
+             or ZERO_G_FETCH_URL_TEMPLATE as a fallback"
         );
+    }
+
+    /// Returns true if the CID matches a 0G root hash (64 hex chars, optional 0x prefix).
+    fn is_zero_g_cid(&self, cid: &str) -> bool {
+        let stripped = cid.strip_prefix("0x").unwrap_or(cid);
+        stripped.len() == 64 && stripped.chars().all(|c| c.is_ascii_hexdigit())
     }
 
     async fn fetch_url(&self, url: &str) -> Result<Vec<u8>> {
@@ -134,7 +170,6 @@ mod tests {
         let raw = r#"{"action":"hold","value_usdc":0,"pool":"","reason":"No trade"}"#;
         let hash = hash_message(raw);
         let sig = wallet.sign_hash(hash).unwrap();
-
         let recovered = sig.recover(RecoveryMessage::Hash(hash)).unwrap();
         assert_eq!(recovered, wallet.address());
     }
@@ -149,9 +184,7 @@ mod tests {
         let hash = hash_message(signed_payload);
         let sig = wallet.sign_hash(hash).unwrap();
         let raw = evidence_json(signed_payload, &sig);
-
         let outcome = verify_evidence(raw.as_bytes(), hash, wallet.address()).unwrap();
-
         assert_eq!(outcome.signer, wallet.address());
         assert_eq!(outcome.content_hash, hash);
         assert_eq!(outcome.signature, sig.to_string());
@@ -163,5 +196,23 @@ mod tests {
         let hash = hash_message(r#"{"action":"hold"}"#);
         let err = verify_evidence(raw, hash, Address::zero()).unwrap_err();
         assert!(err.to_string().contains("TEE attestation missing"));
+    }
+
+    #[test]
+    fn detects_zero_g_cid() {
+        let fetcher = EvidenceFetcher {
+            client: reqwest::Client::new(),
+            zero_g_indexer_url: None,
+            url_template: None,
+            local_dir: None,
+        };
+        assert!(fetcher.is_zero_g_cid(
+            "a3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2"
+        ));
+        assert!(fetcher.is_zero_g_cid(
+            "0xa3f1b2c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2"
+        ));
+        assert!(!fetcher.is_zero_g_cid("http://example.com/evidence.json"));
+        assert!(!fetcher.is_zero_g_cid("short"));
     }
 }
