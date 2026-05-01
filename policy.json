@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "mode": "development",
+  "agent": "Vela demo agent",
+  "plainLanguagePolicy": "Allow the Vela AI agent to execute trades only on whitelisted pools with conservative risk limits.",
+  "constraints": {
+    "onlyWhitelistedPools": true,
+    "maxSlippageBps": 100,
+    "maxTradeSizeUsd": 1000,
+    "maxDailyVolumeUsd": 10000
+  }
+}

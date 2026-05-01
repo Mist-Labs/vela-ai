@@ -68,10 +68,15 @@ const MAX_SQRT_PRICE_MINUS_ONE =
  * Formula: price = (sqrtPriceX96 / 2^96)^2
  * Adjusts for token decimals: USDC=6, WETH=18.
  */
-function sqrtPriceX96ToUsdc(sqrtPriceX96: bigint): number {
+function sqrtPriceX96ToPrice(
+  sqrtPriceX96: bigint,
+  token0Decimals: number,
+  token1Decimals: number,
+): number {
   const Q96 = 2n ** 96n;
-  const price = (sqrtPriceX96 * sqrtPriceX96 * 10n ** 12n) / (Q96 * Q96);
-  return Number(price) / 1e6;
+  const raw = (sqrtPriceX96 * sqrtPriceX96) / ((Q96 * Q96) / 10n ** 18n);
+  const decimalAdj = 10 ** (token0Decimals - token1Decimals);
+  return (Number(raw) / 1e18) * decimalAdj;
 }
 
 function envAddress(name: string): string {
@@ -430,7 +435,7 @@ export class VelaAgent {
     console.log("[Agent] [2/6] Fetching market data from Uniswap v4…");
 
     const [sqrtPriceX96] = await this.stateView.getSlot0(this.pool.poolId);
-    const priceUsdc = sqrtPriceX96ToUsdc(sqrtPriceX96);
+    const priceUsdc = sqrtPriceX96ToPrice(sqrtPriceX96, this.pool.token0Decimals, this.pool.token1Decimals);
 
     let currentApy = 0;
     let tvlUsdc = 0;
@@ -524,7 +529,7 @@ export class VelaAgent {
     }
 
     const [sqrtPriceX96] = await this.stateView.getSlot0(this.pool.poolId);
-    const priceUsdc = sqrtPriceX96ToUsdc(sqrtPriceX96);
+    const priceUsdc = sqrtPriceX96ToPrice(sqrtPriceX96, this.pool.token0Decimals, this.pool.token1Decimals);
     const amountIn = this._decisionValueToAmountIn(
       decision.value_usdc,
       priceUsdc,

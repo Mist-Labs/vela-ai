@@ -27,6 +27,8 @@
     "typescript": "^5.8.3"
   },
   "overrides": {
+    "@wagmi/core": "2.16.4",
+    "@wagmi/connectors": "5.7.4",
     "postcss": "^8.5.10"
   }
 }

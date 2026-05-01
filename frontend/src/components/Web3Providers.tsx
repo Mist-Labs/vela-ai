@@ -1,7 +1,8 @@
 "use client";
 
+import type { AppKitNetwork } from "@reown/appkit/networks";
 import { createAppKit } from "@reown/appkit/react";
-import { baseSepolia } from "@reown/appkit/networks";
+import { sepolia } from "@reown/appkit/networks";
 import { WagmiAdapter } from "@reown/appkit-adapter-wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
@@ -12,26 +13,17 @@ const projectId =
   process.env.NEXT_PUBLIC_REOWN_PROJECT_ID ??
   "00000000000000000000000000000000";
 
-const networks = [baseSepolia] as const;
+const networks = [sepolia] satisfies AppKitNetwork[];
 
 const wagmiAdapter = new WagmiAdapter({
   networks,
   projectId,
   ssr: true,
-  customRpcUrls: process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL
-    ? {
-        [baseSepolia.id]: [
-          {
-            url: process.env.NEXT_PUBLIC_BASE_SEPOLIA_RPC_URL,
-          },
-        ],
-      }
-    : undefined,
 });
 
 createAppKit({
   adapters: [wagmiAdapter],
-  networks,
+  networks: [sepolia] as unknown as [AppKitNetwork, ...AppKitNetwork[]],
   projectId,
   metadata: {
     name: "Vela",

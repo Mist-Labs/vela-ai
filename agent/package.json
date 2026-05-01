@@ -2,16 +2,16 @@
   "name": "@vela/agent",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
+  "type": "commonjs",
   "main": "./dist/agent.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/agent.js",
-    "dev": "tsx src/agent.ts"
+    "dev": "NODE_OPTIONS='--conditions=require' tsx --env-file=../.env src/agent.ts",
+    "start": "NODE_OPTIONS='--conditions=require' tsx --env-file=../.env src/agent.ts"
   },
   "dependencies": {
     "@0gfoundation/0g-ts-sdk": "1.2.7",
-    "@0glabs/0g-serving-broker": "0.7.5",
+    "@0glabs/0g-serving-broker": "^0.7.4",
     "dotenv": "^16.4.7",
     "ethers": "6.13.1"
   },

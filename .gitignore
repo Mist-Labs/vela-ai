@@ -10,3 +10,5 @@ frontend/.next/
 frontend/out/
 frontend/.vercel/
 .env
+.env.local
+.env.development

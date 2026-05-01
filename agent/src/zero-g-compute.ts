@@ -22,38 +22,38 @@ import type { TeeAttestation } from "./zero-g.js";
 // ─────────────────────────────── types ───────────────────────────────────────
 
 export interface MarketData {
-  poolId:         string;
-  poolName:       string;
-  currentApy:     number;   // annualised %
-  sqrtPriceX96:   string;   // raw from poolManager.getSlot0()
-  priceUsdc:      number;   // human-readable USDC per ETH
-  tvlUsdc:        number;
-  volume24hUsdc:  number;
-  timestamp:      number;
+  poolId: string;
+  poolName: string;
+  currentApy: number; // annualised %
+  sqrtPriceX96: string; // raw from poolManager.getSlot0()
+  priceUsdc: number; // human-readable USDC per ETH
+  tvlUsdc: number;
+  volume24hUsdc: number;
+  timestamp: number;
 }
 
 export interface PolicyConstraints {
-  maxValuePerTxUsdc:    number;
-  maxAllocationPerPool: number;   // basis points (2500 = 25%)
-  stopLossBps:          number;
-  activeHoursStartUtc:  number;
-  activeHoursEndUtc:    number;
-  allowedPools:         string[];
-  policyRoot:           string;
+  maxValuePerTxUsdc: number;
+  maxAllocationPerPool: number; // basis points (2500 = 25%)
+  stopLossBps: number;
+  activeHoursStartUtc: number;
+  activeHoursEndUtc: number;
+  allowedPools: string[];
+  policyRoot: string;
 }
 
 export interface AgentDecision {
-  action:     "swap" | "hold" | "rebalance";
+  action: "swap" | "hold" | "rebalance";
   value_usdc: number;
-  pool:       string;
-  reason:     string;
+  pool: string;
+  reason: string;
 }
 
 export interface SealedInferenceResponse {
-  decision:       AgentDecision;
+  decision: AgentDecision;
   teeAttestation: TeeAttestation;
-  rawResponse:    string;   // exact provider-signed model payload
-  model:          string;
+  rawResponse: string; // exact provider-signed model payload
+  model: string;
   providerAddress: string;
 }
 
@@ -82,10 +82,10 @@ Respond ONLY with a valid JSON object. No preamble, no markdown, no explanation 
 }`;
 
 function buildDecisionPrompt(
-  market:      MarketData,
-  constraints: PolicyConstraints
+  market: MarketData,
+  constraints: PolicyConstraints,
 ): string {
-  const nowUtc     = new Date();
+  const nowUtc = new Date();
   const currentHour = nowUtc.getUTCHours();
 
   return `MARKET DATA:
@@ -110,15 +110,17 @@ If no opportunity meets criteria, recommend hold with reason.`;
 // ─────────────────────────────── client ──────────────────────────────────────
 
 export class ZeroGComputeClient {
-  private broker:          Awaited<ReturnType<typeof createZGComputeNetworkBroker>> | null = null;
+  private broker: Awaited<
+    ReturnType<typeof createZGComputeNetworkBroker>
+  > | null = null;
   private readonly wallet: ethers.Wallet;
   private readonly providerAddress: string;
-  private readonly model:           string;
+  private readonly model: string;
 
   constructor(wallet: ethers.Wallet, providerAddress: string, model: string) {
-    this.wallet          = wallet;
+    this.wallet = wallet;
     this.providerAddress = providerAddress;
-    this.model           = model;
+    this.model = model;
   }
 
   // ── initialise ──────────────────────────────────────────────────────────────
@@ -142,17 +144,17 @@ export class ZeroGComputeClient {
 
     // Check sub-account balance.
     const [subAccount] = await this.broker.inference.getAccountWithDetail(
-      this.providerAddress
+      this.providerAddress,
     );
     const balance = subAccount?.balance ?? 0n;
     console.log(
-      `[0G Compute] Sub-account balance: ${ethers.formatEther(balance)} 0G`
+      `[0G Compute] Sub-account balance: ${ethers.formatEther(balance)} 0G`,
     );
 
     if (balance === 0n) {
       throw new Error(
         "[0G Compute] Sub-account has zero balance. " +
-        "Run: 0g-compute-cli transfer-fund --provider <ADDR> --amount 5"
+          "Run: 0g-compute-cli transfer-fund --provider <ADDR> --amount 5",
       );
     }
   }
@@ -168,11 +170,13 @@ export class ZeroGComputeClient {
    * @throws if broker not initialised or inference call fails.
    */
   async requestDecision(
-    market:      MarketData,
-    constraints: PolicyConstraints
+    market: MarketData,
+    constraints: PolicyConstraints,
   ): Promise<SealedInferenceResponse> {
     if (!this.broker) {
-      throw new Error("[0G Compute] Broker not initialised. Call init() first.");
+      throw new Error(
+        "[0G Compute] Broker not initialised. Call init() first.",
+      );
     }
 
     const userPrompt = buildDecisionPrompt(market, constraints);
@@ -181,19 +185,19 @@ export class ZeroGComputeClient {
       model: this.model,
       messages: [
         { role: "system", content: VELA_TRADING_SYSTEM_PROMPT },
-        { role: "user",   content: userPrompt },
+        { role: "user", content: userPrompt },
       ],
       // Keep responses deterministic and concise.
       temperature: 0,
-      max_tokens:  256,
+      max_tokens: 256,
     };
 
     const { endpoint, model } = await this.broker.inference.getServiceMetadata(
-      this.providerAddress
+      this.providerAddress,
     );
     const headers = await this.broker.inference.getRequestHeaders(
       this.providerAddress,
-      JSON.stringify(requestBody)
+      JSON.stringify(requestBody),
     );
 
     const httpResponse = await fetch(`${endpoint}/chat/completions`, {
@@ -205,12 +209,12 @@ export class ZeroGComputeClient {
     if (!httpResponse.ok) {
       const body = await httpResponse.text();
       throw new Error(
-        `[0G Compute] Inference request failed: ${httpResponse.status} ${body}`
+        `[0G Compute] Inference request failed: ${httpResponse.status} ${body}`,
       );
     }
 
     const chatId = httpResponse.headers.get("ZG-Res-Key");
-    const response = await httpResponse.json() as {
+    const response = (await httpResponse.json()) as {
       id?: string;
       choices?: Array<{ message?: { content?: string } }>;
       usage?: unknown;
@@ -221,7 +225,7 @@ export class ZeroGComputeClient {
     const processed = await this.broker.inference.processResponse(
       this.providerAddress,
       chatId ?? response.id,
-      JSON.stringify(response.usage ?? {})
+      JSON.stringify(response.usage ?? {}),
     );
     if (processed !== true) {
       throw new Error("[0G Compute] Provider response could not be verified");
@@ -235,29 +239,32 @@ export class ZeroGComputeClient {
       // Strip any accidental markdown fences.
       const cleaned = rawText
         .replace(/```json\s*/gi, "")
-        .replace(/```\s*/g,     "")
+        .replace(/```\s*/g, "")
         .trim();
       decision = JSON.parse(cleaned) as AgentDecision;
     } catch {
       throw new Error(
-        `[0G Compute] Failed to parse model response as JSON: ${rawText}`
+        `[0G Compute] Failed to parse model response as JSON: ${rawText}`,
       );
     }
 
     // Validate required fields.
     if (!["swap", "hold", "rebalance"].includes(decision.action)) {
-      throw new Error(`[0G Compute] Invalid action in response: ${decision.action}`);
+      throw new Error(
+        `[0G Compute] Invalid action in response: ${decision.action}`,
+      );
     }
 
     // Extract TEE attestation from response metadata.
     // The 0G broker attaches attestation in response.teeAttestation or
     // response.metadata depending on SDK version. Handle both.
-    const attestationRaw = normalizeRecord(response.teeAttestation)
-      ?? normalizeRecord(response.metadata?.teeAttestation);
+    const attestationRaw =
+      normalizeRecord(response.teeAttestation) ??
+      normalizeRecord(response.metadata?.teeAttestation);
     const signatureLink = chatId
       ? await this.broker.inference.getChatSignatureDownloadLink(
           this.providerAddress,
-          chatId
+          chatId,
         )
       : "";
     const fetchedSignature = await fetchSignature(signatureLink);
@@ -265,24 +272,27 @@ export class ZeroGComputeClient {
     const teeAttestation: TeeAttestation = attestationRaw
       ? {
           enclave_id: stringField(attestationRaw, "enclaveId", "enclave_id"),
-          model:      stringField(attestationRaw, "model") || this.model,
+          model: stringField(attestationRaw, "model") || this.model,
           input_hash: stringField(attestationRaw, "inputHash", "input_hash"),
-          signature:  stringField(attestationRaw, "signature") || fetchedSignature,
-          report:     stringField(attestationRaw, "report") || signatureLink,
-          tee_mode:   teeModeField(attestationRaw),
+          signature:
+            stringField(attestationRaw, "signature") || fetchedSignature,
+          report: stringField(attestationRaw, "report") || signatureLink,
+          tee_mode: teeModeField(attestationRaw),
         }
       : {
           enclave_id: this.providerAddress,
-          model:      this.model,
+          model: this.model,
           input_hash: ethers.keccak256(ethers.toUtf8Bytes(userPrompt)),
-          signature:  fetchedSignature,
-          report:     await this.broker.inference.getSignerRaDownloadLink(
-            this.providerAddress
+          signature: fetchedSignature,
+          report: await this.broker.inference.getSignerRaDownloadLink(
+            this.providerAddress,
           ),
-          tee_mode:   "TeeTLS",
+          tee_mode: "TeeTLS",
         };
     if (!ethers.isHexString(teeAttestation.signature, 65)) {
-      throw new Error("[0G Compute] Missing 65-byte provider signature for signed payload");
+      throw new Error(
+        "[0G Compute] Missing 65-byte provider signature for signed payload",
+      );
     }
 
     // rawResponse is the exact model payload covered by the 0G chat signature.
@@ -292,16 +302,15 @@ export class ZeroGComputeClient {
       decision,
       teeAttestation,
       rawResponse,
-      model:           this.model,
+      model: this.model,
       providerAddress: this.providerAddress,
     };
   }
-
 }
 
 function normalizeRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 }
 
@@ -327,7 +336,9 @@ async function fetchSignature(signatureLink: string): Promise<string> {
 
   const response = await fetch(signatureLink);
   if (!response.ok) {
-    throw new Error(`[0G Compute] Failed to fetch response signature: ${response.status}`);
+    throw new Error(
+      `[0G Compute] Failed to fetch response signature: ${response.status}`,
+    );
   }
 
   const text = (await response.text()).trim();
@@ -347,16 +358,22 @@ async function fetchSignature(signatureLink: string): Promise<string> {
  * Call this once at agent startup.
  */
 export async function createZeroGComputeClient(
-  signer: ethers.Wallet
+  signer: ethers.Wallet,
 ): Promise<ZeroGComputeClient> {
   const providerAddress = process.env.ZERO_G_COMPUTE_PROVIDER_ADDRESS;
-  const model           = process.env.ZERO_G_COMPUTE_MODEL ?? "qwen3.6-plus";
+  const model = process.env.ZERO_G_COMPUTE_MODEL ?? "qwen3.6-plus";
 
   if (!providerAddress) {
     throw new Error("ZERO_G_COMPUTE_PROVIDER_ADDRESS not set");
   }
 
-  const client = new ZeroGComputeClient(signer, providerAddress, model);
+  // 0G Compute broker must talk to 0G's own chain, not Base Sepolia.
+  // Reuse the same private key with a 0G-chain provider.
+  const zeroGRpc = process.env.ZERO_G_RPC_URL ?? "https://evmrpc-testnet.0g.ai";
+  const zeroGProvider = new ethers.JsonRpcProvider(zeroGRpc);
+  const zeroGSigner = new ethers.Wallet(signer.privateKey, zeroGProvider);
+
+  const client = new ZeroGComputeClient(zeroGSigner, providerAddress, model);
   await client.init();
   return client;
 }
