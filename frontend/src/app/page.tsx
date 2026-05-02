@@ -3,6 +3,7 @@ import DecisionFeed from "@/components/DecisionFeed";
 import PolicyDisplay from "@/components/PolicyDisplay";
 import { StatsRow } from "@/components/StatsRow";
 import { VelaShell } from "@/components/VelaShell";
+import { AgentTerminal } from "@/components/AgentTerminal";
 
 const securityLayers = [
   {
@@ -56,24 +57,8 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        <section className="panel">
-          <div className="panel-head">
-            <span className="panel-title">Farcaster Alerts</span>
-            <span className="tb-pill pill-dim">@VELA-AGENT</span>
-          </div>
-          <div className="panel-body page-stack">
-            <div className="alert-msg">
-              <div className="alert-head">
-                <span className="alert-title">Live Alert Channel</span>
-                <span className="alert-time">Wallet gated</span>
-              </div>
-              <div className="alert-body">
-                Connect a configured wallet to read vault state. Production
-                alert delivery is handled by the watchtower and Farcaster
-                notifier service.
-              </div>
-            </div>
-          </div>
+        <section className="panel" style={{ padding: 0, overflow: "hidden" }}>
+          <AgentTerminal />
         </section>
       </div>
     </VelaShell>

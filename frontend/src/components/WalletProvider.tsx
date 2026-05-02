@@ -261,7 +261,7 @@ type DecisionRecord = {
 };
 
 export function VelaDataProvider({ children }: { children: React.ReactNode }) {
-  const publicClient = usePublicClient({ chainId: CHAIN_ID });
+  const publicClient = usePublicClient();
   const [data, setData] = useState<Omit<VelaData, "refresh">>({
     loading: false,
     error: "",

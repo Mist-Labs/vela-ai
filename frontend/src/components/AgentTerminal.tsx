@@ -113,6 +113,12 @@ export function AgentTerminal() {
   const [tokenBalance, setTokenBalance] = useState<bigint>(0n);
   const [txHash, setTxHash] = useState("");
   const [agentFeedDone, setAgentFeedDone] = useState(false);
+  const [pendingDecision, setPendingDecision] = useState<{
+    action: string;
+    value_usdc: number;
+    pool: string;
+    reason: string;
+  } | null>(null);
 
   const feedRef = useRef<HTMLDivElement>(null);
   const lineId = useRef(0);
@@ -131,13 +137,17 @@ export function AgentTerminal() {
 
   // Auto-scroll
   useEffect(() => {
-    feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: "smooth" });
+    feedRef.current?.scrollTo({
+      top: feedRef.current.scrollHeight,
+      behavior: "smooth",
+    });
   }, [lines]);
 
   // ── Step 1: boot sequence ──────────────────────────────────────────────────
   useEffect(() => {
     const timers: ReturnType<typeof setTimeout>[] = [];
-    const schedule = (fn: () => void, ms: number) => timers.push(setTimeout(fn, ms));
+    const schedule = (fn: () => void, ms: number) =>
+      timers.push(setTimeout(fn, ms));
 
     schedule(() => push("VELA AGENT TERMINAL v0.1.0", "dim"), 0);
     schedule(() => push("─".repeat(48), "dim"), 120);
@@ -184,17 +194,20 @@ export function AgentTerminal() {
       push("Checking test token balance...", "system");
 
       if (!isAddress(TEST_TOKEN_ADDRESS)) {
-        push("NEXT_PUBLIC_TEST_TOKEN_ADDRESS not set — deploy OZ ERC20 first.", "error");
+        push(
+          "NEXT_PUBLIC_TEST_TOKEN_ADDRESS not set — deploy OZ ERC20 first.",
+          "error",
+        );
         return;
       }
 
       try {
-        const bal = await publicClient.readContract({
+        const bal = (await publicClient.readContract({
           address: TEST_TOKEN_ADDRESS,
           abi: ERC20_MINT_ABI,
           functionName: "balanceOf",
           args: [address as `0x${string}`],
-        }) as bigint;
+        })) as bigint;
 
         setTokenBalance(bal);
         const fmt = formatUnits(bal, VAULT_ASSET_DECIMALS);
@@ -208,7 +221,10 @@ export function AgentTerminal() {
           push("→ Click NEXT to proceed.", "prompt");
         }
       } catch (err) {
-        push(`Balance check failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+        push(
+          `Balance check failed: ${err instanceof Error ? err.message : String(err)}`,
+          "error",
+        );
       }
     };
 
@@ -229,17 +245,23 @@ export function AgentTerminal() {
       });
       push(`Mint tx: ${hash.slice(0, 20)}...`, "dim");
       await publicClient!.waitForTransactionReceipt({ hash });
-      const newBal = await publicClient!.readContract({
+      const newBal = (await publicClient!.readContract({
         address: TEST_TOKEN_ADDRESS,
         abi: ERC20_MINT_ABI,
         functionName: "balanceOf",
         args: [address as `0x${string}`],
-      }) as bigint;
+      })) as bigint;
       setTokenBalance(newBal);
-      push(`Minted. Balance: ${formatUnits(newBal, VAULT_ASSET_DECIMALS)} TEST ✓`, "success");
+      push(
+        `Minted. Balance: ${formatUnits(newBal, VAULT_ASSET_DECIMALS)} TEST ✓`,
+        "success",
+      );
       push("→ Click NEXT to proceed.", "prompt");
     } catch (err) {
-      push(`Mint failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      push(
+        `Mint failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
     } finally {
       setBusy(false);
     }
@@ -260,12 +282,12 @@ export function AgentTerminal() {
 
     try {
       push("Checking ERC-20 allowance...", "dim");
-      const allowance = await publicClient.readContract({
+      const allowance = (await publicClient.readContract({
         address: TEST_TOKEN_ADDRESS,
         abi: ERC20_MINT_ABI,
         functionName: "allowance",
         args: [address as `0x${string}`, VELA_VAULT_ADDRESS as `0x${string}`],
-      }) as bigint;
+      })) as bigint;
 
       if (allowance < amount) {
         push("Approval required — confirm in wallet...", "system");
@@ -275,6 +297,7 @@ export function AgentTerminal() {
           functionName: "approve",
           args: [VELA_VAULT_ADDRESS as `0x${string}`, amount],
           chainId: CHAIN_ID,
+          gas: 100_000n,
         });
         push(`Approve tx: ${approveHash.slice(0, 20)}...`, "dim");
         await publicClient.waitForTransactionReceipt({ hash: approveHash });
@@ -290,14 +313,19 @@ export function AgentTerminal() {
         functionName: "deposit",
         args: [amount, address as `0x${string}`],
         chainId: CHAIN_ID,
+        gas: 300_000n,
       });
+
       push(`Deposit tx: ${depositHash.slice(0, 20)}...`, "dim");
       await publicClient.waitForTransactionReceipt({ hash: depositHash });
       push(`Deposit confirmed ✓`, "success");
       push(`tx: ${depositHash}`, "dim");
       setStep(4);
     } catch (err) {
-      push(`Deposit failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      push(
+        `Deposit failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
     } finally {
       setBusy(false);
     }
@@ -314,64 +342,153 @@ export function AgentTerminal() {
 
     const poll = async () => {
       try {
-        const shares = await publicClient.readContract({
+        const shares = (await publicClient.readContract({
           address: VELA_VAULT_ADDRESS as `0x${string}`,
           abi: VAULT_DEPOSIT_ABI,
           functionName: "balanceOf",
           args: [address as `0x${string}`],
-        }) as bigint;
+        })) as bigint;
 
         if (cancelled) return;
 
         if (shares > 0n) {
           setUserShares(shares);
-          push(`Shares received: ${formatUnits(shares, VAULT_ASSET_DECIMALS)} VELA ✓`, "success");
+          push(
+            `Shares received: ${formatUnits(shares, VAULT_ASSET_DECIMALS)} VELA ✓`,
+            "success",
+          );
           push("Capital allocated. Agent has deployment authority.", "dim");
-          setTimeout(() => { if (!cancelled) setStep(5); }, 600);
+          setTimeout(() => {
+            if (!cancelled) setStep(5);
+          }, 600);
         } else {
           push("Shares not yet settled — retrying in 4s...", "dim");
-          setTimeout(() => { if (!cancelled) void poll(); }, 4000);
+          setTimeout(() => {
+            if (!cancelled) void poll();
+          }, 4000);
         }
       } catch (err) {
-        if (!cancelled) push(`Share check error: ${err instanceof Error ? err.message : String(err)}`, "error");
+        if (!cancelled)
+          push(
+            `Share check error: ${err instanceof Error ? err.message : String(err)}`,
+            "error",
+          );
       }
     };
 
     void poll();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [step, address, publicClient, push]);
 
   // ── Step 5: agent feed ─────────────────────────────────────────────────────
-
   useEffect(() => {
     if (step !== 5) return;
     setAgentFeedDone(false);
     push("─".repeat(48), "dim");
     push("AGENT ACTIVITY FEED — LIVE", "system");
 
-    const sequence: Array<{ text: string; kind: LogLine["kind"]; delay: number }> = [
-      { text: "Fetching Uniswap v4 pool state (ETH/USDC, ETH/DAI)...", kind: "agent", delay: 500 },
-      { text: "Pool 0x1a2b: ETH/USDC  |  TVL $4.2M  |  fee 0.05%", kind: "dim", delay: 1300 },
-      { text: "Pool 0x3c4d: ETH/DAI   |  TVL $1.8M  |  fee 0.30%", kind: "dim", delay: 1900 },
-      { text: "Sending inference request → 0G Sealed Inference (Intel TDX)...", kind: "agent", delay: 2700 },
-      { text: "Attestation quote received from TDX enclave ✓", kind: "dim", delay: 4400 },
-      { text: "Model output: ALLOCATE 60% ETH/USDC · 40% ETH/DAI", kind: "success", delay: 5200 },
-      { text: "Decision JSON assembled. Uploading to 0G DA...", kind: "agent", delay: 6100 },
-      { text: "0G CID: bafyrei...4x9k  |  DA confirmed ✓", kind: "dim", delay: 7600 },
-      { text: "Merkle proof generated. Policy constraints verified ✓", kind: "dim", delay: 8400 },
-      { text: "─".repeat(48), kind: "dim", delay: 9200 },
-      { text: "AWAITING OPERATOR CONFIRMATION", kind: "system", delay: 9600 },
-      { text: "→ Type  confirm  to authorise capital deployment.", kind: "prompt", delay: 10000 },
+    const sequence = [
+      {
+        text: "Fetching on-chain policy constraints...",
+        kind: "agent" as const,
+        delay: 400,
+      },
+      {
+        text: "Reading Uniswap v4 pool state...",
+        kind: "agent" as const,
+        delay: 1100,
+      },
+      {
+        text: "Sending inference request → 0G Sealed Inference (Intel TDX)...",
+        kind: "agent" as const,
+        delay: 2000,
+      },
     ];
-
     const timers = sequence.map(({ text, kind, delay }) =>
-      setTimeout(() => {
-        push(text, kind);
-        if (delay >= 10000) setAgentFeedDone(true);
-      }, delay),
+      setTimeout(() => push(text, kind), delay),
     );
 
-    return () => timers.forEach(clearTimeout);
+    const fetchTimer = setTimeout(async () => {
+      push("Awaiting TEE attestation...", "dim");
+      try {
+        const res = await fetch("/api/agent/decision");
+        if (!res.ok) {
+          const err = (await res
+            .json()
+            .catch(() => ({ error: res.statusText }))) as { error?: string };
+          throw new Error(err.error ?? res.statusText);
+        }
+        const data = (await res.json()) as {
+          decision: {
+            action: string;
+            value_usdc: number;
+            pool: string;
+            reason: string;
+          };
+          summary: string;
+          market: { priceUsdc: number; poolName: string };
+          constraints: {
+            maxValuePerTxUsdc: number;
+            activeHoursStartUtc: number;
+            activeHoursEndUtc: number;
+          };
+        };
+
+        push("0G Sealed Inference response received ✓", "success");
+        push("─".repeat(48), "dim");
+        push(
+          `Pool: ${data.market.poolName}  |  Price: $${data.market.priceUsdc.toFixed(4)}`,
+          "dim",
+        );
+        push(
+          `Active hours: ${data.constraints.activeHoursStartUtc}:00 – ${data.constraints.activeHoursEndUtc}:00 UTC  |  Max tx: $${data.constraints.maxValuePerTxUsdc}`,
+          "dim",
+        );
+        push("─".repeat(48), "dim");
+        push(`AGENT DECISION: ${data.decision.action.toUpperCase()}`, "system");
+        if (data.decision.action !== "hold") {
+          push(
+            `Amount: $${data.decision.value_usdc.toLocaleString()} USDC on ${data.decision.pool}`,
+            "agent",
+          );
+        }
+        push(`Reason: ${data.decision.reason}`, "agent");
+        push("─".repeat(48), "dim");
+        if (data.decision.action === "hold") {
+          push("Agent recommends no trade this cycle.", "dim");
+          push(
+            "→ Type  confirm  to acknowledge and continue monitoring.",
+            "prompt",
+          );
+        } else {
+          push("Policy constraints verified ✓", "success");
+          push(
+            "Decision committed to 0G DA. Awaiting your authorisation.",
+            "system",
+          );
+          push(
+            "→ Type  confirm  to deploy capital through VelaHook.",
+            "prompt",
+          );
+        }
+        setPendingDecision(data.decision);
+        setAgentFeedDone(true);
+      } catch (err) {
+        push(
+          `Decision fetch failed: ${err instanceof Error ? err.message : String(err)}`,
+          "error",
+        );
+        push("→ Check /api/agent/decision or retry.", "prompt");
+        setAgentFeedDone(true);
+      }
+    }, 3200);
+
+    return () => {
+      timers.forEach(clearTimeout);
+      clearTimeout(fetchTimer);
+    };
   }, [step, push]);
 
   // ── Step 6: execute ────────────────────────────────────────────────────────
@@ -384,30 +501,50 @@ export function AgentTerminal() {
     if (busy) return;
     setBusy(true);
     push("─".repeat(48), "dim");
-    push("Operator confirmation received. Deploying capital...", "system");
     setConfirmInput("");
 
+    if (pendingDecision?.action === "hold") {
+      push("Hold acknowledged. Agent will re-evaluate next cycle.", "dim");
+      setBusy(false);
+      setTimeout(() => {
+        push("Restarting agent cycle in 30s...", "dim");
+        setTimeout(() => setStep(5), 30_000);
+      }, 400);
+      return;
+    }
+
+    push("Operator confirmation received. Deploying capital...", "system");
     try {
       const res = await fetch("/api/agent/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operator: address, shares: userShares.toString() }),
+        body: JSON.stringify({
+          operator: address,
+          shares: userShares.toString(),
+          decision: pendingDecision,
+        }),
       });
-
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         throw new Error(`${res.status} — ${body}`);
       }
-
-      const json = await res.json() as { txHash?: string };
+      const json = (await res.json()) as {
+        txHash?: string;
+        commitHash?: string;
+      };
       const hash = json.txHash ?? "pending";
       setTxHash(hash);
+      push("Decision committed on-chain ✓", "success");
       push("Swap routed through VelaHook ✓", "success");
       push(`Hook tx: ${hash}`, "dim");
+      if (json.commitHash) push(`Commit tx: ${json.commitHash}`, "dim");
       push("Position live. Watchtower monitoring 24/7.", "success");
       setTimeout(() => setStep(7), 600);
     } catch (err) {
-      push(`Execution failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      push(
+        `Execution failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
       push("→ Check /api/agent/execute or retry.", "prompt");
     } finally {
       setBusy(false);
@@ -437,11 +574,17 @@ export function AgentTerminal() {
       });
       if (!res.ok) throw new Error(`${res.status}`);
       push("Alert registration confirmed ✓", "success");
-      push("Notifications active: circuit breaker · failed attestations.", "dim");
+      push(
+        "Notifications active: circuit breaker · failed attestations.",
+        "dim",
+      );
       push("─".repeat(48), "dim");
       push("SETUP COMPLETE — VELA IS SAILING.", "success");
     } catch (err) {
-      push(`Registration failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      push(
+        `Registration failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
     } finally {
       setBusy(false);
     }
@@ -478,7 +621,9 @@ export function AgentTerminal() {
       <div className="at-feed" ref={feedRef}>
         {lines.map((line) => (
           <div key={line.id} className={`at-line at-${line.kind}`}>
-            {line.kind === "agent" && <span className="at-agent-tag">AGENT</span>}
+            {line.kind === "agent" && (
+              <span className="at-agent-tag">AGENT</span>
+            )}
             {line.kind === "prompt" && <span className="at-chevron">›</span>}
             {line.text}
           </div>
@@ -487,15 +632,20 @@ export function AgentTerminal() {
 
       {/* Controls */}
       <div className="at-controls">
-
         {/* 1 — wallet */}
         {step === 1 && !isConnected && (
-          <button className="at-btn at-btn-primary" onClick={() => void open({ view: "Connect" })}>
+          <button
+            className="at-btn at-btn-primary"
+            onClick={() => void open({ view: "Connect" })}
+          >
             CONNECT WALLET
           </button>
         )}
         {step === 1 && isConnected && wrongNetwork && (
-          <button className="at-btn at-btn-warn" onClick={() => void open({ view: "Networks" })}>
+          <button
+            className="at-btn at-btn-warn"
+            onClick={() => void open({ view: "Networks" })}
+          >
             SWITCH TO SEPOLIA
           </button>
         )}
@@ -515,7 +665,10 @@ export function AgentTerminal() {
               disabled={tokenBalance < MIN_DEPOSIT}
               onClick={() => {
                 push("─".repeat(48), "dim");
-                push(`Proceeding to deposit. Balance: ${formatUnits(tokenBalance, VAULT_ASSET_DECIMALS)} TEST`, "dim");
+                push(
+                  `Proceeding to deposit. Balance: ${formatUnits(tokenBalance, VAULT_ASSET_DECIMALS)} TEST`,
+                  "dim",
+                );
                 setStep(3);
               }}
             >
@@ -541,10 +694,15 @@ export function AgentTerminal() {
               <span className="at-unit">TEST</span>
             </div>
             <div className="at-hint">
-              Balance: {formatUnits(tokenBalance, VAULT_ASSET_DECIMALS)} TEST &nbsp;·&nbsp; Minimum: 10 TEST
+              Balance: {formatUnits(tokenBalance, VAULT_ASSET_DECIMALS)} TEST
+              &nbsp;·&nbsp; Minimum: 10 TEST
             </div>
             <div className="at-row">
-              <button className="at-btn at-btn-warn" disabled={busy} onClick={() => setStep(2)}>
+              <button
+                className="at-btn at-btn-warn"
+                disabled={busy}
+                onClick={() => setStep(2)}
+              >
                 ← BACK
               </button>
               <button
@@ -573,15 +731,25 @@ export function AgentTerminal() {
               type="text"
               value={confirmInput}
               onChange={(e) => setConfirmInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") void handleConfirm(); }}
-              placeholder={agentFeedDone ? "type confirm to execute" : "agent is processing..."}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleConfirm();
+              }}
+              placeholder={
+                agentFeedDone
+                  ? "type confirm to execute"
+                  : "agent is processing..."
+              }
               disabled={!agentFeedDone || busy}
               spellCheck={false}
               autoComplete="off"
             />
             <button
               className="at-btn at-btn-danger"
-              disabled={!agentFeedDone || busy || confirmInput.trim().toLowerCase() !== "confirm"}
+              disabled={
+                !agentFeedDone ||
+                busy ||
+                confirmInput.trim().toLowerCase() !== "confirm"
+              }
               onClick={() => void handleConfirm()}
             >
               {busy ? "EXECUTING..." : "EXECUTE"}
@@ -637,7 +805,6 @@ export function AgentTerminal() {
             </div>
           </div>
         )}
-
       </div>
     </div>
   );
@@ -704,12 +871,15 @@ const STYLES = `
 .at-feed {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 3px;
   scrollbar-width: thin;
   scrollbar-color: #1a2a1a transparent;
+  min-height: 0;
+  max-height: 420px;
 }
 .at-feed::-webkit-scrollbar { width: 4px; }
 .at-feed::-webkit-scrollbar-thumb { background: #1a2a1a; border-radius: 2px; }

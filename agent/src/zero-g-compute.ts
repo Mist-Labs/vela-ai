@@ -188,8 +188,8 @@ export class ZeroGComputeClient {
         { role: "user", content: userPrompt },
       ],
       // Keep responses deterministic and concise.
-      temperature: 0,
-      max_tokens: 256,
+      temperature: 0.1,
+      max_tokens: 300,
     };
 
     const { endpoint, model } = await this.broker.inference.getServiceMetadata(

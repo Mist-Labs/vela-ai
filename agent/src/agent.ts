@@ -288,6 +288,15 @@ export class VelaAgent {
 
     // 3. Request TEE-attested decision from 0G Sealed Inference.
     console.log("[Agent] [3/6] Requesting decision from 0G Sealed Inference…");
+    console.log(
+      "[Agent]       Constraints:",
+      JSON.stringify({
+        activeHoursStartUtc: constraints.activeHoursStartUtc,
+        activeHoursEndUtc: constraints.activeHoursEndUtc,
+        maxValuePerTxUsdc: constraints.maxValuePerTxUsdc,
+        allowedPools: constraints.allowedPools,
+      }),
+    );
     const inferenceResult = await this.computeClient!.requestDecision(
       market,
       constraints,
@@ -435,7 +444,11 @@ export class VelaAgent {
     console.log("[Agent] [2/6] Fetching market data from Uniswap v4…");
 
     const [sqrtPriceX96] = await this.stateView.getSlot0(this.pool.poolId);
-    const priceUsdc = sqrtPriceX96ToPrice(sqrtPriceX96, this.pool.token0Decimals, this.pool.token1Decimals);
+    const priceUsdc = sqrtPriceX96ToPrice(
+      sqrtPriceX96,
+      this.pool.token0Decimals,
+      this.pool.token1Decimals,
+    );
 
     let currentApy = 0;
     let tvlUsdc = 0;
@@ -503,6 +516,16 @@ export class VelaAgent {
       );
     }
 
+    // Testnet demo: inject synthetic signal when subgraph unavailable
+    if (currentApy === 0 && tvlUsdc === 0) {
+      currentApy = 4.2;
+      tvlUsdc = 1_000_000;
+      volume24hUsdc = 250_000;
+      console.log(
+        "[Agent]       Injected synthetic market data for testnet demo.",
+      );
+    }
+
     return {
       poolId: this.pool.poolId,
       poolName: this.pool.name,
@@ -529,7 +552,11 @@ export class VelaAgent {
     }
 
     const [sqrtPriceX96] = await this.stateView.getSlot0(this.pool.poolId);
-    const priceUsdc = sqrtPriceX96ToPrice(sqrtPriceX96, this.pool.token0Decimals, this.pool.token1Decimals);
+    const priceUsdc = sqrtPriceX96ToPrice(
+      sqrtPriceX96,
+      this.pool.token0Decimals,
+      this.pool.token1Decimals,
+    );
     const amountIn = this._decisionValueToAmountIn(
       decision.value_usdc,
       priceUsdc,
