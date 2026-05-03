@@ -14,6 +14,9 @@ importers:
       '@0gfoundation/0g-storage-ts-sdk':
         specifier: ^1.2.8
         version: 1.2.8(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)
+      '@0gfoundation/0g-ts-sdk':
+        specifier: ^1.2.8
+        version: 1.2.8(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)
       '@coinbase/wallet-sdk':
         specifier: ^4.3.7
         version: 4.3.7(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@5.0.10)(zod@4.4.2)
@@ -103,6 +106,12 @@ packages:
 
   '@0gfoundation/0g-storage-ts-sdk@1.2.8':
     resolution: {integrity: sha512-MpUAgCd96Sv769GKD0qTZtOSnOeEHERgyaCn+x+KMAgf4oKqSNrxPGEDGLxihrP3vV+Hz/xhRggmQnwBi64iLA==}
+    peerDependencies:
+      ethers: 6.13.1
+
+  '@0gfoundation/0g-ts-sdk@1.2.8':
+    resolution: {integrity: sha512-JuPwdo1gugDWgCD+45y71xxGdjNaO5BIG0kRMas8JqWvRJHvK63pHy5m3cbIm+5CLB/vmMaEBbvVWVETcsRhNg==}
+    deprecated: This package has moved. Please use @0gfoundation/0g-storage-ts-sdk instead.
     peerDependencies:
       ethers: 6.13.1
 
@@ -4259,6 +4268,21 @@ snapshots:
       - supports-color
 
   '@0gfoundation/0g-storage-ts-sdk@1.2.8(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)':
+    dependencies:
+      '@ethersproject/bytes': 5.8.0
+      '@ethersproject/keccak256': 5.8.0
+      '@noble/ciphers': 1.3.0
+      '@noble/curves': 1.9.7
+      '@noble/hashes': 1.8.0
+      ethers: 6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      open-jsonrpc-provider: 0.2.1(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+    transitivePeerDependencies:
+      - bufferutil
+      - debug
+      - supports-color
+      - utf-8-validate
+
+  '@0gfoundation/0g-ts-sdk@1.2.8(bufferutil@4.1.0)(ethers@6.16.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)':
     dependencies:
       '@ethersproject/bytes': 5.8.0
       '@ethersproject/keccak256': 5.8.0

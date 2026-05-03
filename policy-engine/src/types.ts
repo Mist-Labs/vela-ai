@@ -1,9 +1,7 @@
 // ─── Pool Registry ───────────────────────────────────────────────────────────
 
 export const POOL_IDS = {
-  ETH_USDC_V4:  'ETH_USDC_V4',
-  WBTC_USDC_V4: 'WBTC_USDC_V4',
-  ETH_USDT_V4:  'ETH_USDT_V4',
+  MOCK_USDC_USDT_V4: "MOCK_USDC_USDT_V4",
 } as const;
 
 export type PoolIdentifier = keyof typeof POOL_IDS | (string & {});
@@ -11,28 +9,29 @@ export type PoolIdentifier = keyof typeof POOL_IDS | (string & {});
 // ─── Tier config (matches PolicyRegistry.sol) ────────────────────────────────
 
 export const TIERS = {
-  MICRO:    0,
+  MICRO: 0,
   STANDARD: 1,
-  PRO:      2,
+  PRO: 2,
 } as const;
 
-export type Tier = typeof TIERS[keyof typeof TIERS];
+export type Tier = (typeof TIERS)[keyof typeof TIERS];
 
 export const TIER_MAX_VALUE_USDC: Record<Tier, number> = {
-  [TIERS.MICRO]:    1_000,
+  [TIERS.MICRO]: 1_000,
   [TIERS.STANDARD]: 10_000,
-  [TIERS.PRO]:      100_000,
+  [TIERS.PRO]: 100_000,
 };
 
 export function deriveTier(maxValuePerTxUsdc: number): Tier {
-  if (maxValuePerTxUsdc <= TIER_MAX_VALUE_USDC[TIERS.MICRO])    return TIERS.MICRO;
-  if (maxValuePerTxUsdc <= TIER_MAX_VALUE_USDC[TIERS.STANDARD]) return TIERS.STANDARD;
+  if (maxValuePerTxUsdc <= TIER_MAX_VALUE_USDC[TIERS.MICRO]) return TIERS.MICRO;
+  if (maxValuePerTxUsdc <= TIER_MAX_VALUE_USDC[TIERS.STANDARD])
+    return TIERS.STANDARD;
   return TIERS.PRO;
 }
 
 // ─── Core constraint model ────────────────────────────────────────────────────
 
-export type RiskProfile = 'conservative' | 'moderate' | 'aggressive';
+export type RiskProfile = "conservative" | "moderate" | "aggressive";
 
 export interface PolicyConstraints {
   /** Maximum portfolio allocation per pool in basis points. 2500 = 25%. */
@@ -64,7 +63,7 @@ export interface ParsedPolicy {
 
 // ─── Conflict detection ───────────────────────────────────────────────────────
 
-export type ConflictSeverity = 'error' | 'warning' | 'info';
+export type ConflictSeverity = "error" | "warning" | "info";
 
 export interface ConflictResult {
   severity: ConflictSeverity;
