@@ -34,10 +34,10 @@ contract AddLiquidity is Script {
             hooks: IHooks(hook)
         });
 
-        uint256 amount0Max = 1_000 * 1e6;
-        uint256 amount1Max = 1_000 * 1e6;
+        uint256 amount0Max = 10_000 * 1e6;
+        uint256 amount1Max = 10_000 * 1e6;
 
-        uint128 liquidity = 1_000 * 1e6;
+        uint128 liquidity = 10_000 * 1e6;
 
         int24 tickLower = -600;
         int24 tickUpper = 600;

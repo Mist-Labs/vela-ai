@@ -243,8 +243,15 @@ export type VelaData = {
 const VelaDataContext = createContext<VelaData | null>(null);
 
 type PolicyCommitment = {
+  owner: string;
+  operator: string;
   policyRoot: `0x${string}`;
   policyURI: string;
+  tier: number;
+  maxValuePerTxUsdc: bigint;
+  activeHoursStartUtc: number;
+  activeHoursEndUtc: number;
+  totalDecisions: bigint;
   compliantDecisions: bigint;
   complianceScore: bigint;
   active: boolean;
@@ -350,6 +357,14 @@ export function VelaDataProvider({ children }: { children: React.ReactNode }) {
         ]);
 
       const typedPolicy = policy as PolicyCommitment;
+      console.log(
+        "[VelaData] active:",
+        typedPolicy.active,
+        "cb:",
+        typedPolicy.circuitBreaker,
+        "raw:",
+        policy,
+      );
       const typedRecent = recent as unknown as DecisionRecord[];
       const typedTotalAssets = totalAssets as bigint;
       const typedTotalSupply = totalSupply as bigint;
@@ -481,13 +496,28 @@ export function VelaDataProvider({ children }: { children: React.ReactNode }) {
         poolAllocations,
       }));
     } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to load live vault data.";
+
+      if (
+        msg.includes("returned no data") ||
+        msg.includes("Failed to fetch") ||
+        msg.includes("HTTP request failed") ||
+        msg.includes("ERR_NAME_NOT_RESOLVED") ||
+        msg.includes("Connect Timeout")
+      ) {
+        setData((current) => ({
+          ...current,
+          loading: false,
+          error: "",
+        }));
+        return;
+      }
+
       setData((current) => ({
         ...current,
         loading: false,
-        error:
-          err instanceof Error
-            ? err.message
-            : "Failed to load live vault data.",
+        error: msg,
       }));
     }
   }, [publicClient]);

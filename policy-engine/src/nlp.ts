@@ -1,11 +1,11 @@
-import OpenAI from 'openai';
+import OpenAI from "openai";
 import type {
   PolicyConstraints,
   ParsedPolicy,
   RiskProfile,
   PoolIdentifier,
-} from './types.js';
-import { POOL_IDS } from './types.js';
+} from "./types.js";
+import { POOL_IDS } from "./types.js";
 
 // ─── Client (singleton) ──────────────────────────────────────────────────────
 
@@ -14,10 +14,10 @@ let _client: OpenAI | null = null;
 function getClient(): OpenAI {
   if (!_client) {
     const apiKey = process.env.MOONSHOT_API_KEY;
-    if (!apiKey) throw new Error('MOONSHOT_API_KEY is not set');
+    if (!apiKey) throw new Error("MOONSHOT_API_KEY is not set");
     _client = new OpenAI({
       apiKey,
-      baseURL: process.env.MOONSHOT_BASE_URL ?? 'https://api.moonshot.ai/v1',
+      baseURL: process.env.MOONSHOT_BASE_URL ?? "https://api.moonshot.ai/v1",
     });
   }
   return _client;
@@ -78,47 +78,64 @@ interface ParseToolInput {
  * It runs once, at vault setup. All downstream logic is deterministic.
  */
 export async function parseIntent(rawIntent: string): Promise<ParsedPolicy> {
-  if (!rawIntent.trim()) throw new Error('Intent is empty');
+  if (!rawIntent.trim()) throw new Error("Intent is empty");
 
   const client = getClient();
 
   const response = await client.chat.completions.create({
-    model: process.env.KIMI_MODEL ?? 'kimi-k2.6',
-    temperature: 0,
-    response_format: { type: 'json_object' },
+    model: process.env.KIMI_MODEL ?? "moonshot-v1-8k",
+    temperature: 0.3,
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: rawIntent.trim() },
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: rawIntent.trim() },
     ],
     max_tokens: 1024,
   });
 
   const content = response.choices[0]?.message.content;
   if (!content) {
-    throw new Error('NLP compilation failed: no structured output returned from model');
+    throw new Error(
+      "NLP compilation failed: no structured output returned from model",
+    );
   }
 
-  const input = parseModelJson(content);
+  const jsonMatch = content.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error(
+      "NLP compilation failed: no JSON object found in model output",
+    );
+  }
+  const input = parseModelJson(jsonMatch[0]);
 
   // Clamp all values to valid ranges — never trust raw LLM output for on-chain commitments
   const constraints: PolicyConstraints = {
-    max_allocation_per_pool_bps: clampNumber(input.max_allocation_per_pool_bps, 100, 10_000),
-    stop_loss_bps:               clampNumber(input.stop_loss_bps, 100, 10_000),
-    active_hours_start_utc:      clampNumber(input.active_hours_start_utc, 0, 23),
-    active_hours_end_utc:        clampNumber(input.active_hours_end_utc, 1, 24),
-    allowed_pools:               sanitizePools(input.allowed_pools),
-    max_value_per_tx_usdc:       Math.max(100, toFiniteNumber(input.max_value_per_tx_usdc, 10_000)),
-    risk_profile:                sanitizeRiskProfile(input.risk_profile),
+    max_allocation_per_pool_bps: clampNumber(
+      input.max_allocation_per_pool_bps,
+      100,
+      10_000,
+    ),
+    stop_loss_bps: clampNumber(input.stop_loss_bps, 100, 10_000),
+    active_hours_start_utc: clampNumber(input.active_hours_start_utc, 0, 23),
+    active_hours_end_utc: clampNumber(input.active_hours_end_utc, 1, 24),
+    allowed_pools: sanitizePools(input.allowed_pools),
+    max_value_per_tx_usdc: Math.max(
+      100,
+      toFiniteNumber(input.max_value_per_tx_usdc, 10_000),
+    ),
+    risk_profile: sanitizeRiskProfile(input.risk_profile),
   };
 
   return {
     constraints,
-    explanation:         sanitizeText(input.explanation, 'Policy compiled from user intent.'),
+    explanation: sanitizeText(
+      input.explanation,
+      "Policy compiled from user intent.",
+    ),
     estimated_apy_range: [
       clampNumber(input.estimated_apy_min, 0, 100),
       clampNumber(input.estimated_apy_max, 0, 100),
     ],
-    raw_intent:          rawIntent,
+    raw_intent: rawIntent,
   };
 }
 
@@ -129,18 +146,18 @@ function parseModelJson(content: string): ParseToolInput {
     const parsed = JSON.parse(content) as Partial<ParseToolInput>;
     return {
       max_allocation_per_pool_bps: parsed.max_allocation_per_pool_bps,
-      stop_loss_bps:               parsed.stop_loss_bps,
-      active_hours_start_utc:      parsed.active_hours_start_utc,
-      active_hours_end_utc:        parsed.active_hours_end_utc,
-      allowed_pools:               parsed.allowed_pools,
-      max_value_per_tx_usdc:       parsed.max_value_per_tx_usdc,
-      risk_profile:                parsed.risk_profile,
-      explanation:                 parsed.explanation,
-      estimated_apy_min:           parsed.estimated_apy_min,
-      estimated_apy_max:           parsed.estimated_apy_max,
+      stop_loss_bps: parsed.stop_loss_bps,
+      active_hours_start_utc: parsed.active_hours_start_utc,
+      active_hours_end_utc: parsed.active_hours_end_utc,
+      allowed_pools: parsed.allowed_pools,
+      max_value_per_tx_usdc: parsed.max_value_per_tx_usdc,
+      risk_profile: parsed.risk_profile,
+      explanation: parsed.explanation,
+      estimated_apy_min: parsed.estimated_apy_min,
+      estimated_apy_max: parsed.estimated_apy_max,
     };
   } catch {
-    throw new Error('NLP compilation failed: model returned invalid JSON');
+    throw new Error("NLP compilation failed: model returned invalid JSON");
   }
 }
 
@@ -149,20 +166,24 @@ function clampNumber(value: unknown, min: number, max: number): number {
 }
 
 function toFiniteNumber(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function sanitizePools(pools: unknown): PoolIdentifier[] {
   const valid = Object.values(POOL_IDS) as string[];
   const input = Array.isArray(pools) ? pools : [];
-  const filtered = input.filter((p): p is PoolIdentifier => typeof p === 'string' && valid.includes(p));
-  return filtered.length > 0 ? filtered : ['ETH_USDC_V4'];
+  const filtered = input.filter(
+    (p): p is PoolIdentifier => typeof p === "string" && valid.includes(p),
+  );
+  return filtered.length > 0 ? filtered : ["ETH_USDC_V4"];
 }
 
 function sanitizeRiskProfile(value: unknown): RiskProfile {
-  return value === 'moderate' || value === 'aggressive' ? value : 'conservative';
+  return value === "moderate" || value === "aggressive"
+    ? value
+    : "conservative";
 }
 
 function sanitizeText(value: unknown, fallback: string): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }

@@ -12,3 +12,4 @@ frontend/.vercel/
 .env
 .env.local
 .env.development
+frontend/data/alert-contacts.json

@@ -56,6 +56,14 @@ function VelaShellInner({ active, eyebrow, children }: VelaShellProps) {
   const wallet = useWallet();
   const { open } = useAppKit();
   const data = useVelaData();
+  console.log(
+    "[Shell] active:",
+    data.active,
+    "error:",
+    data.error,
+    "loading:",
+    data.loading,
+  );
   const [actionError, setActionError] = useState("");
   const [pendingAction, setPendingAction] = useState("");
 
@@ -70,7 +78,9 @@ function VelaShellInner({ active, eyebrow, children }: VelaShellProps) {
       await data.refresh();
       setActionError(`Transaction confirmed: ${shorten(hash)}`);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Transaction failed.");
+      setActionError(
+        err instanceof Error ? err.message : "Transaction failed.",
+      );
     } finally {
       setPendingAction("");
     }
@@ -116,32 +126,54 @@ function VelaShellInner({ active, eyebrow, children }: VelaShellProps) {
           <div className="vault-card">
             <div className="vault-card-label">Active Vault</div>
             <div className="vault-card-addr">
-              {data.vaultAddress ? shorten(data.vaultAddress) : "Not configured"}
+              {data.vaultAddress
+                ? shorten(data.vaultAddress)
+                : "Not configured"}
             </div>
             <div className="vault-card-bal">
-              {data.totalAssets ? `$${Number(data.totalAssets).toLocaleString()}` : "--"}
+              {data.totalAssets
+                ? `$${Number(data.totalAssets).toLocaleString()}`
+                : "--"}
             </div>
             <div className="vault-card-sub">
-              {data.totalDecisions || "0"} decisions | {data.complianceScore || "--"} compliance
+              {data.totalDecisions || "0"} decisions |{" "}
+              {data.complianceScore || "--"} compliance
             </div>
           </div>
 
           <div className="cb-strip">
             <div className="cb-left">
               <span className="cb-dot" />
-              {data.circuitBreaker ? "CIRCUIT BREAKER" : data.active ? "VAULT ACTIVE" : "VAULT STATUS UNKNOWN"}
+              {data.circuitBreaker
+                ? "CIRCUIT BREAKER"
+                : data.active
+                  ? "VAULT ACTIVE"
+                  : data.loading
+                    ? "CONNECTING..."
+                    : "VAULT STATUS UNKNOWN"}
             </div>
             <button
               className="cb-toggle"
-              disabled={!wallet.connected || wrongNetwork || !DEPLOYMENT_CONFIGURED || Boolean(pendingAction)}
+              disabled={
+                !wallet.connected ||
+                wrongNetwork ||
+                !DEPLOYMENT_CONFIGURED ||
+                Boolean(pendingAction)
+              }
               onClick={toggleCircuitBreaker}
               type="button"
             >
-              {pendingAction ? "PENDING" : data.circuitBreaker ? "RESUME" : "PAUSE"}
+              {pendingAction
+                ? "PENDING"
+                : data.circuitBreaker
+                  ? "RESUME"
+                  : "PAUSE"}
             </button>
           </div>
           {(actionError || data.error || wallet.error) && (
-            <div className="sidebar-status">{actionError || data.error || wallet.error}</div>
+            <div className="sidebar-status">
+              {actionError || data.error || wallet.error}
+            </div>
           )}
         </aside>
 

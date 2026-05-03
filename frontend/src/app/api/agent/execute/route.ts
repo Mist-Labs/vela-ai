@@ -33,7 +33,8 @@ function requireEnv(name: string): string {
 
 function requireAddress(name: string): string {
   const v = requireEnv(name);
-  if (!ethers.isAddress(v)) throw new Error(`${name} is not a valid address: ${v}`);
+  if (!ethers.isAddress(v))
+    throw new Error(`${name} is not a valid address: ${v}`);
   return ethers.getAddress(v);
 }
 
@@ -42,44 +43,48 @@ function requireAddress(name: string): string {
 export async function POST(req: NextRequest) {
   let body: { operator?: string; shares?: string };
   try {
-    body = await req.json() as typeof body;
+    body = (await req.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
   const { operator } = body;
   if (!operator || !ethers.isAddress(operator)) {
-    return NextResponse.json({ error: "operator address required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "operator address required" },
+      { status: 400 },
+    );
   }
 
   try {
     // ── env ──────────────────────────────────────────────────────────────────
-    const rpcUrl        = requireEnv("RPC_URL");
-    const privateKey    = requireEnv("AGENT_PRIVATE_KEY"); // separate from PRIVATE_KEY
-    const vaultAddress  = requireAddress("NEXT_PUBLIC_VELA_VAULT_ADDRESS");
-    const hookAddress   = requireAddress("VELA_HOOK_ADDRESS");
+    const rpcUrl = requireEnv("RPC_URL");
+    const privateKey = requireEnv("AGENT_PRIVATE_KEY"); // separate from PRIVATE_KEY
+    const vaultAddress = requireAddress("NEXT_PUBLIC_VELA_VAULT_ADDRESS");
+    const hookAddress = requireAddress("VELA_HOOK_ADDRESS");
     const stateViewAddr = requireAddress("STATE_VIEW_ADDRESS");
-    const currency0     = requireAddress("ACTIVE_POOL_CURRENCY0");
-    const currency1     = requireAddress("ACTIVE_POOL_CURRENCY1");
-    const poolId        = requireEnv("ACTIVE_POOL_ID");
-    const fee           = Number(process.env.ACTIVE_POOL_FEE ?? "3000");
-    const tickSpacing   = Number(process.env.ACTIVE_POOL_TICK_SPACING ?? "60");
-    const zeroForOne    = (process.env.ACTIVE_POOL_ZERO_FOR_ONE ?? "false") === "true";
-    const token0Dec     = Number(process.env.ACTIVE_POOL_TOKEN0_DECIMALS ?? "18");
-    const token1Dec     = Number(process.env.ACTIVE_POOL_TOKEN1_DECIMALS ?? "6");
-    const slippageBps   = Number(process.env.TRADE_SLIPPAGE_BPS ?? "100");
+    const currency0 = requireAddress("ACTIVE_POOL_CURRENCY0");
+    const currency1 = requireAddress("ACTIVE_POOL_CURRENCY1");
+    const poolId = requireEnv("ACTIVE_POOL_ID");
+    const fee = Number(process.env.ACTIVE_POOL_FEE ?? "3000");
+    const tickSpacing = Number(process.env.ACTIVE_POOL_TICK_SPACING ?? "60");
+    const zeroForOne =
+      (process.env.ACTIVE_POOL_ZERO_FOR_ONE ?? "false") === "true";
+    const token0Dec = Number(process.env.ACTIVE_POOL_TOKEN0_DECIMALS ?? "18");
+    const token1Dec = Number(process.env.ACTIVE_POOL_TOKEN1_DECIMALS ?? "6");
+    const slippageBps = Number(process.env.TRADE_SLIPPAGE_BPS ?? "100");
 
     // Demo trade size: 100 USDC equivalent, overridable
     const tradeValueUsdc = Number(process.env.DEMO_TRADE_VALUE_USDC ?? "100");
 
     // ── provider / signer ────────────────────────────────────────────────────
     const provider = new ethers.JsonRpcProvider(rpcUrl);
-    const signer   = new ethers.Wallet(privateKey, provider);
-    const vault    = new ethers.Contract(vaultAddress, VAULT_ABI, signer);
-    const sv       = new ethers.Contract(stateViewAddr, STATE_VIEW_ABI, provider);
+    const signer = new ethers.Wallet(privateKey, provider);
+    const vault = new ethers.Contract(vaultAddress, VAULT_ABI, signer);
+    const sv = new ethers.Contract(stateViewAddr, STATE_VIEW_ABI, provider);
 
     // ── get current price ────────────────────────────────────────────────────
-    const [sqrtPriceX96] = await sv.getSlot0(poolId) as [bigint];
+    const [sqrtPriceX96] = (await sv.getSlot0(poolId)) as [bigint];
     const priceUsdc = sqrtPriceX96ToUsdc(sqrtPriceX96);
 
     // ── compute amounts ──────────────────────────────────────────────────────
@@ -87,25 +92,28 @@ export async function POST(req: NextRequest) {
       return ethers.parseUnits(value.toFixed(decimals), decimals);
     }
 
-    let amountIn: bigint;
-    let minAmountOut: bigint;
     const keepBps = 10_000 - slippageBps;
 
+    let amountIn: bigint;
+    let minAmountOut: bigint;
+
     if (zeroForOne) {
-      // selling token0 (WETH) for token1 (USDC)
-      const token0Amount = tradeValueUsdc / priceUsdc;
-      amountIn = toUnits(token0Amount, token0Dec);
-      const rawOut = toUnits(tradeValueUsdc, token1Dec);
-      minAmountOut = (rawOut * BigInt(keepBps)) / 10_000n;
+      amountIn = ethers.parseUnits(String(tradeValueUsdc), token0Dec);
+      minAmountOut =
+        (ethers.parseUnits(String(tradeValueUsdc), token1Dec) *
+          BigInt(keepBps)) /
+        10_000n;
     } else {
-      // selling token1 (USDC) for token0 (WETH)
-      amountIn = toUnits(tradeValueUsdc, token1Dec);
-      const token0Amount = tradeValueUsdc / priceUsdc;
-      const rawOut = toUnits(token0Amount, token0Dec);
-      minAmountOut = (rawOut * BigInt(keepBps)) / 10_000n;
+      amountIn = ethers.parseUnits(String(tradeValueUsdc), token1Dec);
+      minAmountOut =
+        (ethers.parseUnits(String(tradeValueUsdc), token0Dec) *
+          BigInt(keepBps)) /
+        10_000n;
     }
 
-    const sqrtPriceLimitX96 = zeroForOne ? MIN_SQRT_PRICE_PLUS_ONE : MAX_SQRT_PRICE_MINUS_ONE;
+    const sqrtPriceLimitX96 = zeroForOne
+      ? (sqrtPriceX96 * 99n) / 100n
+      : (sqrtPriceX96 * 101n) / 100n;
 
     // ── commit decision on-chain (operator-triggered) ─────────────────────────
     const explanation = `Operator-confirmed swap: $${tradeValueUsdc} USDC at price $${priceUsdc.toFixed(2)}`;
@@ -114,8 +122,14 @@ export async function POST(req: NextRequest) {
       ethers.toUtf8Bytes(`${operator}:${Date.now()}:${tradeValueUsdc}`),
     );
 
-    const commitTx = await vault.commitDecision(contentHash, explanation, evidenceCID);
-    const commitReceipt = await (commitTx as ethers.ContractTransactionResponse).wait();
+    const commitTx = await vault.commitDecision(
+      contentHash,
+      explanation,
+      evidenceCID,
+    );
+    const commitReceipt = await (
+      commitTx as ethers.ContractTransactionResponse
+    ).wait();
     if (!commitReceipt) throw new Error("commitDecision: no receipt");
 
     // ── execute swap through VelaHook ────────────────────────────────────────
@@ -126,7 +140,9 @@ export async function POST(req: NextRequest) {
       minAmountOut,
       sqrtPriceLimitX96,
     });
-    const swapReceipt = await (swapTx as ethers.ContractTransactionResponse).wait();
+    const swapReceipt = await (
+      swapTx as ethers.ContractTransactionResponse
+    ).wait();
     if (!swapReceipt) throw new Error("executeHookSwap: no receipt");
 
     return NextResponse.json({

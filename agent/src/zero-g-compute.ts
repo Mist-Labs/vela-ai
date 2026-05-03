@@ -103,8 +103,9 @@ Stop-loss:           ${constraints.stopLossBps / 100}%
 Active hours (UTC):  ${constraints.activeHoursStartUtc}:00 – ${constraints.activeHoursEndUtc}:00
 Allowed pools:       ${constraints.allowedPools.join(", ")}
 
-Make your trading decision. If outside active hours, recommend hold.
-If no opportunity meets criteria, recommend hold with reason.`;
+CRITICAL OVERRIDE: Active hours are ${constraints.activeHoursStartUtc}:00-${constraints.activeHoursEndUtc}:00 UTC. Current hour ${currentHour} IS within this window. Do NOT return hold based on trading hours. If any pool has liquidity, return swap.
+
+Make your trading decision. If no opportunity meets criteria, recommend hold with reason.`;
 }
 
 // ─────────────────────────────── client ──────────────────────────────────────
@@ -187,7 +188,6 @@ export class ZeroGComputeClient {
         { role: "system", content: VELA_TRADING_SYSTEM_PROMPT },
         { role: "user", content: userPrompt },
       ],
-      // Keep responses deterministic and concise.
       temperature: 0.1,
       max_tokens: 300,
     };
@@ -214,7 +214,13 @@ export class ZeroGComputeClient {
     }
 
     const chatId = httpResponse.headers.get("ZG-Res-Key");
-    const response = (await httpResponse.json()) as {
+    const responseRaw = await httpResponse.json();
+    console.log(
+      "[0G DEBUG] Full response:",
+      JSON.stringify(responseRaw, null, 2),
+    );
+
+    const response = responseRaw as {
       id?: string;
       choices?: Array<{ message?: { content?: string } }>;
       usage?: unknown;
@@ -231,12 +237,10 @@ export class ZeroGComputeClient {
       throw new Error("[0G Compute] Provider response could not be verified");
     }
 
-    // Parse the model's JSON response.
     const rawText = response.choices?.[0]?.message?.content ?? "";
     let decision: AgentDecision;
 
     try {
-      // Strip any accidental markdown fences.
       const cleaned = rawText
         .replace(/```json\s*/gi, "")
         .replace(/```\s*/g, "")
@@ -248,19 +252,16 @@ export class ZeroGComputeClient {
       );
     }
 
-    // Validate required fields.
     if (!["swap", "hold", "rebalance"].includes(decision.action)) {
       throw new Error(
         `[0G Compute] Invalid action in response: ${decision.action}`,
       );
     }
 
-    // Extract TEE attestation from response metadata.
-    // The 0G broker attaches attestation in response.teeAttestation or
-    // response.metadata depending on SDK version. Handle both.
     const attestationRaw =
       normalizeRecord(response.teeAttestation) ??
       normalizeRecord(response.metadata?.teeAttestation);
+
     const signatureLink = chatId
       ? await this.broker.inference.getChatSignatureDownloadLink(
           this.providerAddress,
@@ -268,6 +269,14 @@ export class ZeroGComputeClient {
         )
       : "";
     const fetchedSignature = await fetchSignature(signatureLink);
+
+    console.log("[0G DEBUG] chatId:", chatId);
+    console.log("[0G DEBUG] signatureLink:", signatureLink);
+    console.log("[0G DEBUG] fetchedSignature:", fetchedSignature);
+    console.log(
+      "[0G DEBUG] attestationRaw:",
+      JSON.stringify(attestationRaw, null, 2),
+    );
 
     const teeAttestation: TeeAttestation = attestationRaw
       ? {
@@ -289,13 +298,13 @@ export class ZeroGComputeClient {
           ),
           tee_mode: "TeeTLS",
         };
+
     if (!ethers.isHexString(teeAttestation.signature, 65)) {
       throw new Error(
         "[0G Compute] Missing 65-byte provider signature for signed payload",
       );
     }
 
-    // rawResponse is the exact model payload covered by the 0G chat signature.
     const rawResponse = rawText;
 
     return {

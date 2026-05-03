@@ -27,7 +27,7 @@ contract Deploy is Script {
     // Base Sepolia USDC (Circle's testnet deployment)
     address constant USDC_BASE_SEPOLIA = 0x036CbD53842c5426634e7929541eC2318f3dCF7e;
     // Base Sepolia Uniswap v4 PoolManager.
-    address constant POOL_MANAGER_BASE_SEPOLIA = 0x05e73354cFdD6745c338B50bcfDFA14A7E33F5c3;
+    address constant POOL_MANAGER_BASE_SEPOLIA = 0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408;
     // Base Sepolia Uniswap v4 StateView lens.
     address constant STATE_VIEW_BASE_SEPOLIA = 0x571291b572ed32ce6751a2Cb2486EbEe8DEfB9B4;
 

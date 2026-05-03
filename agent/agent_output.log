@@ -1,0 +1,24 @@
+
+> @vela/agent@0.1.0 dev
+> NODE_OPTIONS='--conditions=require' tsx --env-file=../.env src/agent.ts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  VelaAgent starting up
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Agent:  0xF23a4a721d59CA979cB354bae567A59eD7EC04c5
+  Vault:  0x45b9F15A91a1A64765a8A37910A4fbdBd48094Ad
+  Pool:   MockUSDC/MockUSDT (0x8e0e223de1cf52f911ad2abaa56976d7347588637e747e7b6467cc69a6915391)
+JsonRpcProvider failed to detect network and cannot start up; retry in 1s (perhaps the URL is wrong or the node is not started)
+[Agent] Fatal error: Error: request timeout (code=TIMEOUT, version=6.13.1)
+    at makeError (/Users/MAC/Rust/vela/agent/node_modules/ethers/src.ts/utils/errors.ts:694:21)
+    at ClientRequest.<anonymous> (/Users/MAC/Rust/vela/agent/node_modules/ethers/src.ts/utils/geturl.ts:66:33)
+    at ClientRequest.emit (node:events:518:28)
+    at TLSSocket.emitRequestTimeout (node:_http_client:863:9)
+    at Object.onceWrapper (node:events:632:28)
+    at TLSSocket.emit (node:events:530:35)
+    at Socket._onTimeout (node:net:604:8)
+    at listOnTimeout (node:internal/timers:588:17)
+    at process.processTimers (node:internal/timers:523:7) {
+  code: 'TIMEOUT',
+  shortMessage: 'request timeout'
+}

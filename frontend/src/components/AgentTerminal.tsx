@@ -77,15 +77,32 @@ const VAULT_DEPOSIT_ABI = [
   },
 ] as const;
 
-// Add NEXT_PUBLIC_TEST_TOKEN_ADDRESS to your .env
+const POLICY_REGISTRY_ABI = [
+  {
+    name: "registerAgentWithPolicy",
+    type: "function",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "policyRoot", type: "bytes32" },
+      { name: "policyURI", type: "string" },
+      { name: "tier", type: "uint256" },
+      { name: "activeHoursStartUtc", type: "uint8" },
+      { name: "activeHoursEndUtc", type: "uint8" },
+    ],
+    outputs: [],
+  },
+] as const;
+
 const TEST_TOKEN_ADDRESS = (process.env.NEXT_PUBLIC_TEST_TOKEN_ADDRESS ??
   "") as `0x${string}`;
+const POLICY_REGISTRY_ADDRESS = (process.env
+  .NEXT_PUBLIC_POLICY_REGISTRY_ADDRESS ?? "") as `0x${string}`;
 const MINT_AMOUNT = parseUnits("1000", VAULT_ASSET_DECIMALS);
 const MIN_DEPOSIT = parseUnits("10", VAULT_ASSET_DECIMALS);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 type LogLine = {
   id: number;
@@ -105,6 +122,8 @@ export function AgentTerminal() {
   const [step, setStep] = useState<Step>(1);
   const [lines, setLines] = useState<LogLine[]>([]);
   const [busy, setBusy] = useState(false);
+  const [intentInput, setIntentInput] = useState("");
+  const [compilingPolicy, setCompilingPolicy] = useState(false);
   const [depositInput, setDepositInput] = useState("100");
   const [alertEmail, setAlertEmail] = useState("");
   const [alertFarcaster, setAlertFarcaster] = useState("");
@@ -163,7 +182,7 @@ export function AgentTerminal() {
         push("→ Connect your wallet to begin.", "prompt");
       } else if (wrongNetwork) {
         push(`Connected: ${address}`, "success");
-        push("Wrong network — switch to Ethereum Sepolia.", "error");
+        push("Wrong network — switch to Base Sepolia.", "error");
       } else {
         push(`Connected: ${address}`, "success");
         prevConnected.current = true;
@@ -185,9 +204,126 @@ export function AgentTerminal() {
     }
   }, [isConnected, wrongNetwork, address, step, push]);
 
-  // ── Step 2: balance check ──────────────────────────────────────────────────
+  // ── Step 2 entry message ───────────────────────────────────────────────────
   useEffect(() => {
-    if (step !== 2 || !address || !publicClient) return;
+    if (step !== 2) return;
+    push("─".repeat(48), "dim");
+    push("Set your investment policy.", "system");
+    push(
+      "Describe your goals in plain English. Kimi will compile and register it on-chain.",
+      "dim",
+    );
+    push("→ Enter your intent below and click COMPILE + REGISTER.", "prompt");
+  }, [step, push]);
+
+  // ── Step 2: compile + register policy ─────────────────────────────────────
+  async function handleCompilePolicy() {
+    if (!intentInput.trim() || compilingPolicy || !address) return;
+    setCompilingPolicy(true);
+    push("─".repeat(48), "dim");
+    push("Compiling policy intent via Kimi...", "system");
+
+    try {
+      const compileRes = await fetch("/api/policy/compile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ intent: intentInput.trim() }),
+      });
+      const compiled = (await compileRes.json()) as {
+        policyRoot?: string;
+        policyURI?: string;
+        parsed?: {
+          constraints?: {
+            active_hours_start_utc?: number;
+            active_hours_end_utc?: number;
+            max_allocation_per_pool_bps?: number;
+            stop_loss_bps?: number;
+            risk_profile?: string;
+          };
+          explanation?: string;
+          estimated_apy_range?: number[];
+        };
+        validation?: { conflicts?: Array<{ message: string }> };
+        error?: string;
+      };
+
+      if (!compileRes.ok || compiled.error) {
+        throw new Error(compiled.error ?? "Compilation failed");
+      }
+
+      const c = compiled.parsed?.constraints;
+      push("Policy compiled ✓", "success");
+      push(
+        `Risk: ${c?.risk_profile ?? "conservative"}  |  Max pool: ${((c?.max_allocation_per_pool_bps ?? 2500) / 100).toFixed(0)}%  |  Stop-loss: ${((c?.stop_loss_bps ?? 1500) / 100).toFixed(0)}%`,
+        "dim",
+      );
+      push(
+        `Active hours: ${c?.active_hours_start_utc ?? 0}:00 – ${c?.active_hours_end_utc ?? 24}:00 UTC`,
+        "dim",
+      );
+      push(
+        `APY estimate: ${compiled.parsed?.estimated_apy_range?.[0] ?? 0}% – ${compiled.parsed?.estimated_apy_range?.[1] ?? 0}%`,
+        "dim",
+      );
+
+      if ((compiled.validation?.conflicts?.length ?? 0) > 0) {
+        push(
+          `⚠ ${compiled.validation!.conflicts!.map((cf) => cf.message).join(" · ")}`,
+          "error",
+        );
+      }
+
+      push(`Policy root: ${compiled.policyRoot?.slice(0, 20)}...`, "dim");
+      push("Registering policy on-chain — confirm in wallet...", "system");
+
+      const startHour = c?.active_hours_start_utc ?? 0;
+      const endHour = c?.active_hours_end_utc ?? 24;
+
+      const policyURI =
+        compiled.policyURI ||
+        `ipfs://vela-policy-${compiled.policyRoot?.slice(2, 10) ?? "bootstrap"}`;
+
+      console.log("[policy/register] policyRoot:", compiled.policyRoot);
+      console.log("[policy/register] policyURI:", policyURI);
+      console.log(
+        "[policy/register] startHour:",
+        startHour,
+        "endHour:",
+        endHour,
+      );
+
+      await writeContractAsync({
+        address: POLICY_REGISTRY_ADDRESS,
+        abi: POLICY_REGISTRY_ABI,
+        functionName: "registerAgentWithPolicy",
+        args: [
+          compiled.policyRoot as `0x${string}`,
+          policyURI,
+          1n,
+          startHour,
+          endHour,
+        ],
+        chainId: CHAIN_ID,
+        gas: 500_000n,
+      });
+
+      push("Policy registered on-chain ✓", "success");
+      setIntentInput("");
+      push("─".repeat(48), "dim");
+      setTimeout(() => setStep(3), 600);
+    } catch (err) {
+      push(
+        `Policy setup failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    } finally {
+      setCompilingPolicy(false);
+    }
+  }
+
+  // ── Step 3: balance check ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (step !== 3 || !address || !publicClient) return;
 
     const run = async () => {
       push("─".repeat(48), "dim");
@@ -267,8 +403,7 @@ export function AgentTerminal() {
     }
   }
 
-  // ── Step 3: deposit ────────────────────────────────────────────────────────
-
+  // ── Step 4: deposit ────────────────────────────────────────────────────────
   async function handleDeposit() {
     if (!address || busy || !publicClient) return;
     const amount = parseUnits(depositInput || "0", VAULT_ASSET_DECIMALS);
@@ -320,7 +455,7 @@ export function AgentTerminal() {
       await publicClient.waitForTransactionReceipt({ hash: depositHash });
       push(`Deposit confirmed ✓`, "success");
       push(`tx: ${depositHash}`, "dim");
-      setStep(4);
+      setStep(5);
     } catch (err) {
       push(
         `Deposit failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -331,10 +466,9 @@ export function AgentTerminal() {
     }
   }
 
-  // ── Step 4: poll shares ────────────────────────────────────────────────────
-
+  // ── Step 5: poll shares ────────────────────────────────────────────────────
   useEffect(() => {
-    if (step !== 4 || !address || !publicClient) return;
+    if (step !== 5 || !address || !publicClient) return;
     push("─".repeat(48), "dim");
     push("Verifying vault share allocation...", "system");
 
@@ -359,7 +493,7 @@ export function AgentTerminal() {
           );
           push("Capital allocated. Agent has deployment authority.", "dim");
           setTimeout(() => {
-            if (!cancelled) setStep(5);
+            if (!cancelled) setStep(6);
           }, 600);
         } else {
           push("Shares not yet settled — retrying in 4s...", "dim");
@@ -382,9 +516,9 @@ export function AgentTerminal() {
     };
   }, [step, address, publicClient, push]);
 
-  // ── Step 5: agent feed ─────────────────────────────────────────────────────
+  // ── Step 6: agent feed ─────────────────────────────────────────────────────
   useEffect(() => {
-    if (step !== 5) return;
+    if (step !== 6) return;
     setAgentFeedDone(false);
     push("─".repeat(48), "dim");
     push("AGENT ACTIVITY FEED — LIVE", "system");
@@ -410,79 +544,108 @@ export function AgentTerminal() {
       setTimeout(() => push(text, kind), delay),
     );
 
-    const fetchTimer = setTimeout(async () => {
-      push("Awaiting TEE attestation...", "dim");
-      try {
-        const res = await fetch("/api/agent/decision");
-        if (!res.ok) {
-          const err = (await res
-            .json()
-            .catch(() => ({ error: res.statusText }))) as { error?: string };
-          throw new Error(err.error ?? res.statusText);
-        }
-        const data = (await res.json()) as {
-          decision: {
-            action: string;
-            value_usdc: number;
-            pool: string;
-            reason: string;
-          };
-          summary: string;
-          market: { priceUsdc: number; poolName: string };
-          constraints: {
-            maxValuePerTxUsdc: number;
-            activeHoursStartUtc: number;
-            activeHoursEndUtc: number;
-          };
-        };
+    const fetchTimer = setTimeout(() => {
+      const MAX_ATTEMPTS = 15;
+      let attempt = 0;
 
-        push("0G Sealed Inference response received ✓", "success");
-        push("─".repeat(48), "dim");
-        push(
-          `Pool: ${data.market.poolName}  |  Price: $${data.market.priceUsdc.toFixed(4)}`,
-          "dim",
-        );
-        push(
-          `Active hours: ${data.constraints.activeHoursStartUtc}:00 – ${data.constraints.activeHoursEndUtc}:00 UTC  |  Max tx: $${data.constraints.maxValuePerTxUsdc}`,
-          "dim",
-        );
-        push("─".repeat(48), "dim");
-        push(`AGENT DECISION: ${data.decision.action.toUpperCase()}`, "system");
-        if (data.decision.action !== "hold") {
+      const tryFetch = async (): Promise<void> => {
+        attempt += 1;
+        if (attempt === 1) {
+          push("Awaiting TEE attestation...", "dim");
+        } else {
           push(
-            `Amount: $${data.decision.value_usdc.toLocaleString()} USDC on ${data.decision.pool}`,
-            "agent",
+            `Network error — retrying... (${attempt}/${MAX_ATTEMPTS})`,
+            "dim",
           );
         }
-        push(`Reason: ${data.decision.reason}`, "agent");
-        push("─".repeat(48), "dim");
-        if (data.decision.action === "hold") {
-          push("Agent recommends no trade this cycle.", "dim");
+
+        try {
+          const res = await fetch("/api/agent/decision");
+          if (!res.ok) {
+            const err = (await res
+              .json()
+              .catch(() => ({ error: res.statusText }))) as { error?: string };
+            throw new Error(err.error ?? res.statusText);
+          }
+          const data = (await res.json()) as {
+            decision: {
+              action: string;
+              value_usdc: number;
+              pool: string;
+              reason: string;
+            };
+            summary: string;
+            market: { priceUsdc: number; poolName: string };
+            constraints: {
+              maxValuePerTxUsdc: number;
+              activeHoursStartUtc: number;
+              activeHoursEndUtc: number;
+            };
+          };
+
+          push("0G Sealed Inference response received ✓", "success");
+          push("─".repeat(48), "dim");
           push(
-            "→ Type  confirm  to acknowledge and continue monitoring.",
-            "prompt",
+            `Pool: ${data.market.poolName}  |  Price: $${data.market.priceUsdc.toFixed(4)}`,
+            "dim",
           );
-        } else {
-          push("Policy constraints verified ✓", "success");
           push(
-            "Decision committed to 0G DA. Awaiting your authorisation.",
+            `Active hours: ${data.constraints.activeHoursStartUtc}:00 – ${data.constraints.activeHoursEndUtc}:00 UTC  |  Max tx: $${data.constraints.maxValuePerTxUsdc}`,
+            "dim",
+          );
+          push("─".repeat(48), "dim");
+          push(
+            `AGENT DECISION: ${data.decision.action.toUpperCase()}`,
             "system",
           );
-          push(
-            "→ Type  confirm  to deploy capital through VelaHook.",
-            "prompt",
-          );
+          if (data.decision.action !== "hold") {
+            push(
+              `Amount: $${data.decision.value_usdc.toLocaleString()} USDC on ${data.decision.pool}`,
+              "agent",
+            );
+          }
+          push(`Reason: ${data.decision.reason}`, "agent");
+          push("─".repeat(48), "dim");
+          if (data.decision.action === "hold") {
+            push("Agent recommends no trade this cycle.", "dim");
+            push(
+              "→ Type  confirm  to acknowledge and continue monitoring.",
+              "prompt",
+            );
+          } else {
+            push("Policy constraints verified ✓", "success");
+            push(
+              "Decision committed to 0G DA. Awaiting your authorisation.",
+              "system",
+            );
+            push(
+              "→ Type  confirm  to deploy capital through VelaHook.",
+              "prompt",
+            );
+          }
+          setPendingDecision(data.decision);
+          setAgentFeedDone(true);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const isNetwork =
+            msg.includes("timeout") ||
+            msg.includes("fetch") ||
+            msg.includes("ENOTFOUND") ||
+            msg.includes("network");
+          if (isNetwork && attempt < MAX_ATTEMPTS) {
+            setTimeout(() => void tryFetch(), 4000);
+          } else {
+            push(
+              `Decision fetch failed after ${attempt} attempt${attempt > 1 ? "s" : ""}: ${msg}`,
+              "error",
+            );
+            push("→ Check your connection or retry.", "prompt");
+            setAgentFeedDone(true);
+          }
         }
-        setPendingDecision(data.decision);
-        setAgentFeedDone(true);
-      } catch (err) {
-        push(
-          `Decision fetch failed: ${err instanceof Error ? err.message : String(err)}`,
-          "error",
-        );
-        push("→ Check /api/agent/decision or retry.", "prompt");
-        setAgentFeedDone(true);
-      }
+      };
+
+      void tryFetch();
     }, 3200);
 
     return () => {
@@ -491,8 +654,7 @@ export function AgentTerminal() {
     };
   }, [step, push]);
 
-  // ── Step 6: execute ────────────────────────────────────────────────────────
-
+  // ── Step 7: execute ────────────────────────────────────────────────────────
   async function handleConfirm() {
     if (confirmInput.trim().toLowerCase() !== "confirm") {
       push("Type  confirm  exactly to authorise.", "error");
@@ -508,22 +670,66 @@ export function AgentTerminal() {
       setBusy(false);
       setTimeout(() => {
         push("Restarting agent cycle in 30s...", "dim");
-        setTimeout(() => setStep(5), 30_000);
+        setTimeout(() => setStep(6), 30_000);
       }, 400);
       return;
     }
 
     push("Operator confirmation received. Deploying capital...", "system");
     try {
-      const res = await fetch("/api/agent/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          operator: address,
-          shares: userShares.toString(),
-          decision: pendingDecision,
-        }),
-      });
+      const executeWithRetry = async (
+        attempts = 5,
+        delayMs = 4000,
+      ): Promise<Response> => {
+        for (let i = 1; i <= attempts; i++) {
+          try {
+            const res = await fetch("/api/agent/execute", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                operator: address,
+                shares: userShares.toString(),
+                decision: pendingDecision,
+              }),
+            });
+
+            if (res.status === 500) {
+              const body = await res.text().catch(() => "");
+              if (
+                (body.includes("timeout") || body.includes("TIMEOUT")) &&
+                i < attempts
+              ) {
+                push(
+                  `RPC timeout — retrying in 4s... (${i}/${attempts})`,
+                  "dim",
+                );
+                await new Promise((r) => setTimeout(r, delayMs));
+                continue;
+              }
+              return new Response(body, { status: 500 });
+            }
+            return res;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            const isNetwork =
+              msg.includes("timeout") ||
+              msg.includes("fetch") ||
+              msg.includes("ENOTFOUND");
+            if (isNetwork && i < attempts) {
+              push(
+                `Execute network error — retrying in 4s... (${i}/${attempts})`,
+                "dim",
+              );
+              await new Promise((r) => setTimeout(r, delayMs));
+            } else {
+              throw err;
+            }
+          }
+        }
+        throw new Error("Execute failed after all retries");
+      };
+
+      const res = await executeWithRetry();
       if (!res.ok) {
         const body = await res.text().catch(() => "");
         throw new Error(`${res.status} — ${body}`);
@@ -539,7 +745,7 @@ export function AgentTerminal() {
       push(`Hook tx: ${hash}`, "dim");
       if (json.commitHash) push(`Commit tx: ${json.commitHash}`, "dim");
       push("Position live. Watchtower monitoring 24/7.", "success");
-      setTimeout(() => setStep(7), 600);
+      setTimeout(() => setStep(8), 600);
     } catch (err) {
       push(
         `Execution failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -551,8 +757,7 @@ export function AgentTerminal() {
     }
   }
 
-  // ── Step 7: alert registration ─────────────────────────────────────────────
-
+  // ── Step 8: alert registration ─────────────────────────────────────────────
   async function handleAlerts() {
     if (!alertEmail && !alertFarcaster) {
       push("Provide at least one contact method.", "error");
@@ -602,7 +807,7 @@ export function AgentTerminal() {
           <span className="at-blink">▋</span> AGENT TERMINAL
         </div>
         <div className="at-steps">
-          {([1, 2, 3, 4, 5, 6, 7] as Step[]).map((s) => (
+          {([1, 2, 3, 4, 5, 6, 7, 8] as Step[]).map((s) => (
             <span
               key={s}
               className={[
@@ -646,12 +851,40 @@ export function AgentTerminal() {
             className="at-btn at-btn-warn"
             onClick={() => void open({ view: "Networks" })}
           >
-            SWITCH TO SEPOLIA
+            SWITCH TO BASE SEPOLIA
           </button>
         )}
 
-        {/* 2 — mint / next */}
+        {/* 2 — policy intent */}
         {step === 2 && (
+          <div className="at-col">
+            <textarea
+              className="at-input"
+              style={{ minHeight: "72px", resize: "vertical" }}
+              value={intentInput}
+              onChange={(e) => setIntentInput(e.target.value)}
+              placeholder="Grow my portfolio steadily. Never put more than 40% in one pool. Stop if I lose more than 20%. Trade anytime, no hour restrictions."
+              disabled={compilingPolicy}
+              spellCheck={false}
+            />
+            <div className="at-hint">
+              Describe your investment goals in plain English. Kimi compiles
+              this into a verifiable on-chain policy.
+            </div>
+            <button
+              className="at-btn at-btn-primary"
+              disabled={compilingPolicy || !intentInput.trim()}
+              onClick={() => void handleCompilePolicy()}
+            >
+              {compilingPolicy
+                ? "COMPILING + REGISTERING..."
+                : "COMPILE + REGISTER POLICY →"}
+            </button>
+          </div>
+        )}
+
+        {/* 3 — mint / next */}
+        {step === 3 && (
           <div className="at-row">
             <button
               className="at-btn at-btn-secondary"
@@ -669,7 +902,7 @@ export function AgentTerminal() {
                   `Proceeding to deposit. Balance: ${formatUnits(tokenBalance, VAULT_ASSET_DECIMALS)} TEST`,
                   "dim",
                 );
-                setStep(3);
+                setStep(4);
               }}
             >
               NEXT →
@@ -677,8 +910,8 @@ export function AgentTerminal() {
           </div>
         )}
 
-        {/* 3 — deposit */}
-        {step === 3 && (
+        {/* 4 — deposit */}
+        {step === 4 && (
           <div className="at-col">
             <div className="at-row">
               <label className="at-label">DEPOSIT</label>
@@ -701,7 +934,7 @@ export function AgentTerminal() {
               <button
                 className="at-btn at-btn-warn"
                 disabled={busy}
-                onClick={() => setStep(2)}
+                onClick={() => setStep(3)}
               >
                 ← BACK
               </button>
@@ -716,15 +949,15 @@ export function AgentTerminal() {
           </div>
         )}
 
-        {/* 4 — settling */}
-        {step === 4 && (
+        {/* 5 — settling */}
+        {step === 5 && (
           <div className="at-status">
             <span className="at-spinner" /> Awaiting share settlement...
           </div>
         )}
 
-        {/* 5 — confirm */}
-        {step === 5 && (
+        {/* 6 — confirm */}
+        {step === 6 && (
           <div className="at-row">
             <input
               className="at-input at-confirm-input"
@@ -757,15 +990,15 @@ export function AgentTerminal() {
           </div>
         )}
 
-        {/* 6 — tx in flight */}
-        {step === 6 && (
+        {/* 7 — tx in flight */}
+        {step === 7 && (
           <div className="at-status">
             <span className="at-spinner" /> Routing through VelaHook...
           </div>
         )}
 
-        {/* 7 — alerts */}
-        {step === 7 && (
+        {/* 8 — alerts */}
+        {step === 8 && (
           <div className="at-col">
             <div className="at-row">
               <input
@@ -827,7 +1060,6 @@ const STYLES = `
   overflow: hidden;
 }
 
-/* ── Header ── */
 .at-header {
   display: flex;
   align-items: center;
@@ -850,12 +1082,12 @@ const STYLES = `
 }
 @keyframes blink { 50% { opacity: 0; } }
 
-.at-steps { display: flex; gap: 6px; }
+.at-steps { display: flex; gap: 4px; }
 .at-step {
-  width: 22px; height: 22px;
+  width: 20px; height: 20px;
   border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 10px;
+  font-size: 9px;
   background: #0e1a0e;
   border: 1px solid #1f3020;
   color: #3a4e3a;
@@ -867,7 +1099,6 @@ const STYLES = `
   box-shadow: 0 0 8px #4cff7240;
 }
 
-/* ── Feed ── */
 .at-feed {
   flex: 1;
   overflow-y: auto;
@@ -879,7 +1110,7 @@ const STYLES = `
   scrollbar-width: thin;
   scrollbar-color: #1a2a1a transparent;
   min-height: 0;
-  max-height: 420px;
+  max-height: 380px;
 }
 .at-feed::-webkit-scrollbar { width: 4px; }
 .at-feed::-webkit-scrollbar-thumb { background: #1a2a1a; border-radius: 2px; }
@@ -907,7 +1138,6 @@ const STYLES = `
 }
 .at-chevron { color: #fbbf24; font-size: 14px; line-height: 1.4; flex-shrink: 0; }
 
-/* ── Spinner ── */
 .at-spinner {
   display: inline-block; width: 10px; height: 10px;
   border: 1.5px solid #1a2a1a; border-top-color: #4cff72;
@@ -916,7 +1146,6 @@ const STYLES = `
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ── Controls ── */
 .at-controls {
   flex-shrink: 0;
   padding: 12px 16px;
@@ -931,7 +1160,6 @@ const STYLES = `
 .at-label { font-size: 10px; letter-spacing: 0.12em; color: #3a6040; white-space: nowrap; }
 .at-unit  { font-size: 10px; color: #3a4e3a; white-space: nowrap; }
 
-/* Inputs */
 .at-input {
   flex: 1; min-width: 120px;
   background: #0a120a; border: 1px solid #1a2a1a; border-radius: 3px;
@@ -943,7 +1171,6 @@ const STYLES = `
 .at-input:disabled { opacity: 0.4; cursor: not-allowed; }
 .at-confirm-input { letter-spacing: 0.08em; }
 
-/* Buttons */
 .at-btn {
   font-family: inherit; font-size: 10.5px; letter-spacing: 0.12em;
   padding: 7px 16px; border-radius: 3px; border: 1px solid;
