@@ -5,6 +5,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Built at ETHGlobal Open Agents](https://img.shields.io/badge/Built%20at-ETHGlobal%20Open%20Agents-blue)](https://ethglobal.com)
 [![Network: Base Sepolia](https://img.shields.io/badge/Network-Base%20Sepolia-0052FF)](https://sepolia.basescan.org)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-vela--ai--chi.vercel.app-green)](https://vela-ai-chi.vercel.app)
+
+**Live:** [https://vela-ai-chi.vercel.app](https://vela-ai-chi.vercel.app)
 
 ---
 
@@ -84,8 +87,8 @@ Vela uses 0G across two layers:
 - `agent/src/zero-g.ts` — `ZeroGStorageClient`: upload, fetchRaw, verifyRecordIntegrity
 - `agent/src/zero-g-compute.ts` — `ZeroGComputeClient`: TEE inference, attestation extraction
 - `watchtower/src/checker.rs` — CID fetch and hash verification loop
-- `app/api/policy/compile/route.ts` — policy blob upload on compile
-- `app/api/agent/decision/route.ts` — live inference call per operator cycle
+- `frontend/src/app/api/policy/compile/route.ts` — policy blob upload on compile
+- `frontend/src/app/api/agent/decision/route.ts` — live inference call per operator cycle
 
 **0G endpoints:**
 ```
@@ -107,7 +110,7 @@ Vela is built natively on Uniswap v4 and uses two primitives unavailable in v3:
 **Key integration points:**
 - `contracts/src/hooks/VelaHook.sol` — `beforeSwap` authorization gate
 - `contracts/src/VelaVault.sol` — `executeHookSwap`, `unlockCallback`, ERC4626
-- `app/api/agent/execute/route.ts` — TypeScript execution path
+- `frontend/src/app/api/agent/execute/route.ts` — TypeScript execution path
 - `agent/src/agent.ts` — autonomous loop executing swaps on signal
 
 **V4 contracts (Base Sepolia):**
@@ -152,8 +155,8 @@ PositionManager:   0x4b2b777b0F6d2A2a1E69A2df3C8cFfD2D4c39D5A
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/your-org/vela-protocol
-cd vela-protocol
+git clone https://github.com/Mist-Labs/vela-ai
+cd vela-ai
 ```
 
 ### 2. Frontend
@@ -179,7 +182,6 @@ forge test --match-path test/MockUSDC.t.sol -vv
 ```bash
 cd agent
 pnpm install
-# uses root .env via --env-file flag
 NODE_OPTIONS='--conditions=require' tsx --env-file=../.env src/agent.ts
 # or:
 pnpm dev
@@ -244,6 +246,11 @@ ZERO_G_INDEXER_URL=https://indexer-storage-testnet-turbo.0g.ai
 ZERO_G_COMPUTE_PROVIDER_ADDRESS=0xa48f01287233509FD694a22Bf840225062E67836
 ZERO_G_COMPUTE_MODEL=qwen/qwen-2.5-7b-instruct
 
+# NLP (policy compiler)
+MOONSHOT_API_KEY=sk-...
+MOONSHOT_BASE_URL=https://api.moonshot.ai/v1
+KIMI_MODEL=moonshot-v1-8k
+
 # Trade
 DEMO_TRADE_VALUE_USDC=20
 TRADE_SLIPPAGE_BPS=1000
@@ -252,7 +259,10 @@ TRADE_SLIPPAGE_BPS=1000
 NEXT_PUBLIC_REOWN_PROJECT_ID=your_project_id
 
 # App URL (Farcaster frames)
-NEXT_PUBLIC_APP_URL=https://your-deployment.vercel.app
+NEXT_PUBLIC_APP_URL=https://vela-ai-chi.vercel.app
+
+# Database (required for Prisma)
+DATABASE_URL=file:./dev.db
 ```
 
 ---
@@ -260,14 +270,12 @@ NEXT_PUBLIC_APP_URL=https://your-deployment.vercel.app
 ## Demo Flow
 
 1. **Connect wallet** — MetaMask on Base Sepolia
-2. **Get test tokens** — Agent Terminal mints 1000 mUSDC from the public faucet
-3. **Deposit** — approve + deposit into VelaVault (ERC4626), receive vlSHARE tokens
-4. **Define policy** — go to `/create`, describe risk tolerance in plain English (e.g. "max $500 per trade, active 0-24 UTC, stop loss 5%"), compile → registers Merkle root + 0G DA CID on-chain
+2. **Define policy** — Agent Terminal step 2: describe risk tolerance in plain English (e.g. "max $500 per trade, stop loss 5%, trade anytime"), Kimi compiles into typed constraints, Merkle root registered on-chain via PolicyRegistry
+3. **Get test tokens** — mint 1000 mUSDC from the public faucet
+4. **Deposit** — approve + deposit into VelaVault (ERC4626), receive vlSHARE tokens
 5. **Agent decides** — Terminal calls `/api/agent/decision`: fetches live policy from 0G DA, reads pool state from Uniswap v4 StateView, requests decision from 0G Sealed Inference (TDX enclave), returns plain-English summary
 6. **Operator confirms** — type `confirm` → `/api/agent/execute` commits decision on-chain and executes swap through VelaHook
 7. **Verify on-chain** — Dashboard shows decision feed, compliance score, TEE verification status
-- **Network dependency** — WalletConnect RPC relay (`rpc.walletconnect.org`) is used as fallback transport. On restricted networks, MetaMask injected provider is required for reliable contract reads.
-- **Policy NLP model** — uses `moonshot-v1-8k` via Moonshot AI API. Requires `MOONSHOT_API_KEY` in `frontend/.env.local`. kimi-k2.x series not supported (thinking mode breaks JSON output).
 
 ### Tamper Demo
 
@@ -284,16 +292,18 @@ npx ts-node inject-tamper.ts
 ## Known Limitations (Testnet)
 
 - **TEE verification counter shows 0** — the testnet 0G Compute provider (`0xa48f01...`) is a centralized Aliyun/dstack node. `AttestationContract.verifyAndSettle()` requires a genuine Intel TDX attestation report. Production deployment targets a verified TDX enclave.
-- **Policy URI fallback** — if `policyURI` is not a live 0G DA CID the agent falls back to safe defaults (`activeHoursStartUtc=0, activeHoursEndUtc=24`). Register a real policy via `/create` to activate full constraint decoding.
+- **Policy URI fallback** — if `policyURI` is not a live 0G DA CID the agent falls back to safe defaults (`activeHoursStartUtc=0, activeHoursEndUtc=24`). Register a real policy via the Agent Terminal to activate full constraint decoding.
 - **Low pool liquidity** — testnet MockUSDC/MockUSDT pool has ~300 USDC liquidity. Demo trade size capped at 20 USDC.
+- **Network dependency** — WalletConnect RPC relay (`rpc.walletconnect.org`) is used as fallback transport. On restricted networks, MetaMask injected provider is required for reliable contract reads.
+- **Policy NLP model** — uses `moonshot-v1-8k` via Moonshot AI API. Requires `MOONSHOT_API_KEY`. kimi-k2.x series not supported (thinking mode incompatible with JSON output).
 
 ---
 
 ## Project Structure
 
 ```
-vela/
-├── frontend/           # Next.js 15 app
+vela-ai/
+├── frontend/           # Next.js 15 app (Vercel)
 │   ├── src/app/        # pages: /, /create, /decisions, /policy, /watchtower
 │   ├── src/components/ # AgentTerminal, Dashboard, WalletProvider, VelaShell
 │   └── src/app/api/    # agent/decision, agent/execute, policy/compile, alerts/register
