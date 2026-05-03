@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ethers } from "ethers";
-import { compilePolicy } from "../../../../../../policy-engine";
+import { compilePolicy } from "@vela/policy-engine";
 
 // ─── 0G DA upload ─────────────────────────────────────────────────────────────
 

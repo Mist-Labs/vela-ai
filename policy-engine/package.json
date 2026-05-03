@@ -5,18 +5,20 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest"
   },
   "dependencies": {
-    "ethers": "^6.11.0",
+    "ethers": "^6.16.0",
     "merkletreejs": "^0.6.0",
-    "openai": "^4.100.0"
-  },
-  "devDependencies": {
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.5"
+    "openai": "^6.35.0"
   }
 }

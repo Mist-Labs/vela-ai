@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import ConflictAlert from "./ConflictAlert";
 import { useVelaData, useWallet } from "./WalletProvider";
-import type { CompiledPolicy } from "../../../policy-engine";
+import type { CompiledPolicy } from "@vela/policy-engine";
 
 export default function IntentInput() {
   const wallet = useWallet();

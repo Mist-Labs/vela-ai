@@ -4,9 +4,11 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "pnpm --filter @vela/policy-engine build",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
     "@0gfoundation/0g-compute-ts-sdk": "^0.8.0",
@@ -18,10 +20,13 @@
     "@reown/appkit": "^1.8.19",
     "@reown/appkit-adapter-wagmi": "^1.8.19",
     "@tanstack/react-query": "^5.100.5",
+    "@vela/policy-engine": "workspace:*",
     "@walletconnect/ethereum-provider": "^2.23.9",
     "dotenv": "^17.4.2",
     "ethers": "^6.16.0",
+    "merkletreejs": "^0.6.0",
     "next": "^15.3.0",
+    "openai": "^6.35.0",
     "pg": "^8.20.0",
     "porto": "^0.2.37",
     "react": "^19.0.0",

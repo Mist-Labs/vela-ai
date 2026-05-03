@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { compilePolicy } from "../../../../../policy-engine";
+import { compilePolicy } from "@vela/policy-engine";
 
 const VAULT = process.env.NEXT_PUBLIC_VELA_VAULT_ADDRESS ?? "";
 const REGISTRY = process.env.NEXT_PUBLIC_POLICY_REGISTRY_ADDRESS ?? "";
